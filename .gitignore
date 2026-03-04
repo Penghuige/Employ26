@@ -1,0 +1,80 @@
+# 数据文件（5GB，不提交）
+data/
+*.csv
+*.xlsx
+*.xls
+
+# 输出文件
+output/
+!output/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# 环境
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 模型文件
+*.pkl
+*.model
+*.bin
+*.h5
+*.pth
+
+# 日志
+*.log
+logs/
+
+# 缓存
+cache/
+.cache/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+
+
+
+
+
+
+

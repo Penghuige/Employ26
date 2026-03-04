@@ -1,0 +1,30 @@
+# 技能提取模块依赖
+
+# 基础依赖
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Word2Vec
+gensim>=4.3.0
+
+# 进度条
+tqdm>=4.65.0
+
+# BERT-NER（可选，用于命名实体识别）
+# 如果不使用BERT，可以不安装以下依赖
+transformers>=4.30.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+
+# GPU加速（可选）
+# 如果有NVIDIA GPU，建议安装CUDA版本的PyTorch
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+
+
+
+
+
+
+
