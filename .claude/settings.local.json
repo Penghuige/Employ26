@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"\\(Get-Content 'D:\\\\PythonProjects\\\\Employ26\\\\dicts\\\\occupation_skill_dictionary_v2.4.json' | Measure-Object -Line\\).Lines\")",
+      "Bash(powershell -Command \"\\(Get-Content 'd:\\\\PythonProjects\\\\Employ26\\\\dicts\\\\occupation_skill_dictionary_v2.4.json' | Measure-Object -Line\\).Lines\")",
+      "Bash(powershell -Command \"\\(Get-Content 'd:\\\\PythonProjects\\\\Employ26\\\\dicts\\\\occupation_skill_dictionary_v2.4.json' -Raw | ConvertFrom-Json\\).Count\")",
+      "Read(//d d:/PythonProjects/**)",
+      "Bash(python -X utf8 -c \"import json;f=open\\('dicts/occupation_skill_dictionary_v2.4.json','r',encoding='utf-8'\\);data=json.load\\(f\\);f.close\\(\\);skills=data['skills'];print\\(f'Total skills: {len\\(skills\\)}'\\);from collections import Counter;names=[s['name'] for s in skills];dupes=[\\(n,c\\) for n,c in Counter\\(names\\).items\\(\\) if c>1];print\\(f'Exact duplicate names: {len\\(dupes\\)}'\\);[print\\(f'  {n} x{c}'\\) for n,c in dupes[:10]];types=Counter\\(s.get\\('skill_type',''\\) for s in skills\\);print\\(f'Skill types:'\\);[print\\(f'  {t}: {c}'\\) for t,c in types.most_common\\(\\)];wa=sum\\(1 for s in skills if s.get\\('aliases'\\)\\);print\\(f'With aliases: {wa}'\\);ta=sum\\(len\\(s.get\\('aliases',[]\\)\\) for s in skills\\);print\\(f'Total aliases: {ta}'\\)\")",
+      "Bash(python -X utf8 -c ':*)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/test/merge_similar_skills.py', doraise=True\\); print\\('Syntax OK'\\)\")",
+      "Read(//d//**)",
+      "Read(//c//**)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('src/skill_extraction/occupation_skill_pipeline.py', doraise=True\\); print\\('Syntax OK'\\)\")"
+    ]
+  }
+}

@@ -1,360 +1,203 @@
-# 技能提取模块使用说明
+# 技能词典流程
 
-## 📋 模块概述
+当前 `src/skill_extraction` 目录只保留和“职业细类技能词典”直接相关的脚本，不再保留旧的 Word2Vec / BERT / 实验型技能抽取脚本。
 
-本模块实现了两种技能提取方法：
-1. **Word2Vec** - 基于词向量的相似技能发现
-2. **BERT-NER** - 基于命名实体识别的技能提取
+## 目录职责
 
-## 📁 项目结构
+- `config.py`
+  读取 `config/database.yaml`，统一 DuckDB、BGE 模型、输出目录、词典目录配置。
+- `bge_matcher.py`
+  使用 `D:\model\bge-base-zh-finetuned` 做职业细类匹配，返回 Top5 候选，并按 Top1 到 Top5 依次回退选择首个可用细类。
+- `data_source.py`
+  从 DuckDB 读取招聘样本，匹配职业细类，生成训练清单和验证池。
+- `dictionary_store.py`
+  统一管理 `dicts/occupation_skill_dictionary.json`。
+- `import_llm_results.py`
+  把 LLM 输出的 `JSON / Markdown / 文本` 结果自动解析并合并回职业技能词典。
+- `clean_skill_dictionary.py`
+  清洗职业技能词典，移除软技能、学历门槛、福利待遇、工作时间等非硬技能噪音，并输出审计报告。
+- `init_llm_output_layout.py`
+  初始化 `output/skill_extraction/llm_outputs` 目录规范模板。
+- `coverage.py`
+  评估职业细类技能词典对验证集“任职要求”条目的覆盖率。
+- `occupation_skill_pipeline.py`
+  主 CLI。负责抽样、切割任职要求、生成 LLM prompt、覆盖率验证与迭代补词。
 
-```
-src/skill_extraction/
-├── __init__.py                      # 模块初始化
-├── word2vec_extractor.py            # Word2Vec提取器
-├── bert_extractor.py                # BERT-NER提取器
-├── run_extraction_pipeline.py       # 主流程（整合两种方法）
-└── README.md                        # 本文件
+## 流程说明
 
-output/skill_extraction/             # 输出目录（自动创建）
-├── word2vec_expanded_skills.txt     # Word2Vec扩展词典
-├── word2vec_expanded_skills.json    # Word2Vec详细结果
-├── word2vec_expansion_report.txt    # Word2Vec报告
-├── bert_extracted_skills.txt        # BERT提取词典
-├── bert_extracted_entities.json     # BERT详细结果
-├── bert_skill_statistics.csv        # BERT技能统计
-├── bert_extraction_report.txt       # BERT报告
-├── final_expanded_skills.txt        # 最终合并词典
-├── final_skills_detail.json         # 最终详细信息
-└── final_extraction_report.txt      # 最终对比报告
+1. 每个职业细类默认抽取 100 条训练样本。
+2. 训练样本通过 `src.preprocessing.parse_desc.parse_desc_df` 切出“任职要求”，减少发给 LLM 的 token。
+3. LLM 根据每个细类的训练 prompt 输出技能词典，并写回 `dicts/occupation_skill_dictionary.json`。
+4. 每轮从同一细类的验证池中再随机抽 10 条作为验证集。
+5. 如果某细类覆盖率低于 95%，自动生成补词 prompt，补词后继续下一轮验证。
 
-models/                              # 模型目录（自动创建）
-└── word2vec_skills.model            # Word2Vec训练的模型
-```
+## 使用方式
 
-## 🚀 使用方法
-
-### 方法1：运行完整流水线（推荐）
-
-```bash
-# 进入项目目录
-cd d:\pythonProject\leisure\Employ26
-
-# 运行完整流水线（使用样本数据）
-python src/skill_extraction/run_extraction_pipeline.py
-```
-
-**流程说明：**
-1. Word2Vec训练并扩展技能（约5分钟）
-2. BERT提取技能实体（约10-30分钟，取决于GPU）
-3. 合并两种方法的结果
-4. 生成最终词典和报告
-
-### 方法2：单独运行Word2Vec
+### 1. 生成训练样本与训练 prompt
 
 ```bash
-# 只运行Word2Vec
-python src/skill_extraction/word2vec_extractor.py
+python -m src.skill_extraction.occupation_skill_pipeline prepare ^
+  --train-size 100 ^
+  --validation-batch-size 10 ^
+  --parse-workers 1
 ```
 
-**输出：**
-- `output/skill_extraction/word2vec_expanded_skills.txt` - 扩展词典
-- `output/skill_extraction/word2vec_expansion_report.txt` - 分析报告
+输出：
 
-### 方法3：单独运行BERT
+- `output/skill_extraction/occupation_skill_training_manifest.csv`
+- `output/skill_extraction/occupation_skill_training_requirements.csv`
+- `output/skill_extraction/occupation_skill_validation_pool.csv`
+- `output/skill_extraction/occupation_skill_category_summary.csv`
+- `output/skill_extraction/prompts/train/*.md`
+- `dicts/occupation_skill_dictionary.json`
+
+### 2. 执行一轮覆盖率验证
 
 ```bash
-# 只运行BERT（需要先安装transformers）
-python src/skill_extraction/bert_extractor.py
+python -m src.skill_extraction.occupation_skill_pipeline iterate ^
+  --validation-batch-size 10 ^
+  --coverage-threshold 0.95 ^
+  --parse-workers 1
 ```
 
-**输出：**
-- `output/skill_extraction/bert_extracted_skills.txt` - 提取词典
-- `output/skill_extraction/bert_extraction_report.txt` - 分析报告
+输出：
 
-### 方法4：在代码中调用
+- `output/skill_extraction/reports/round_XX/validation_samples.csv`
+- `output/skill_extraction/reports/round_XX/coverage_summary.csv`
+- `output/skill_extraction/reports/round_XX/coverage_items.csv`
+- `output/skill_extraction/reports/round_XX/uncovered_items.csv`
+- `output/skill_extraction/prompts/supplement/round_XX/*.md`
 
-```python
-from src.skill_extraction import SkillExtractionPipeline
+### 3. 导入 LLM 返回的 JSON
 
-# 创建流水线
-pipeline = SkillExtractionPipeline()
-
-# 运行完整流程
-all_skills = pipeline.run_full_pipeline(
-    use_sample=True,   # 使用样本数据
-    max_rows=1000      # BERT处理1000行
-)
-
-print(f"提取技能数: {len(all_skills)}")
-```
-
-## 📦 依赖安装
-
-### 基础依赖（Word2Vec）
 ```bash
-pip install pandas numpy gensim tqdm
+python -m src.skill_extraction.import_llm_results ^
+  --input output/skill_extraction/llm_outputs
 ```
 
-### BERT依赖（可选，用于BERT-NER）
+### 4. 初始化 LLM 输出目录模板
+
 ```bash
-# CPU版本
-pip install transformers torch
-
-# GPU版本（推荐，需要CUDA）
-pip install transformers
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+python -m src.skill_extraction.init_llm_output_layout
 ```
 
-## ⚙️ 配置参数
+默认会生成：
 
-### Word2Vec参数
+- `output/skill_extraction/llm_outputs/README.md`
+- `output/skill_extraction/llm_outputs/train/round_00/raw/`
+- `output/skill_extraction/llm_outputs/train/round_00/json/`
+- `output/skill_extraction/llm_outputs/train/round_00/imported/`
+- `output/skill_extraction/llm_outputs/supplement/round_01/raw/`
+- `output/skill_extraction/llm_outputs/supplement/round_01/json/`
+- `output/skill_extraction/llm_outputs/supplement/round_01/imported/`
+- `output/skill_extraction/llm_outputs/examples/*.json`
 
-在 `word2vec_extractor.py` 中修改：
+支持：
 
-```python
-# 训练参数
-params = {
-    'vector_size': 300,      # 词向量维度（100-300）
-    'window': 5,             # 上下文窗口（3-10）
-    'min_count': 5,          # 最小词频（3-10）
-    'workers': 4,            # 并行线程数
-    'epochs': 10,            # 训练轮数（5-20）
-    'sg': 1,                 # 1=Skip-gram, 0=CBOW
+- 单个 `.json`
+- 单个 `.md`
+- 单个 `.txt`
+- 一个目录下的上述文件，默认递归扫描
+
+如果只想先看导入结果，不写回词典：
+
+```bash
+python -m src.skill_extraction.import_llm_results ^
+  --input output/skill_extraction/llm_outputs ^
+  --dry-run
+```
+
+### 5. 查看当前状态
+
+```bash
+python -m src.skill_extraction.occupation_skill_pipeline status
+```
+
+### 6. 清洗技能词典中的软技能与招聘噪音
+
+```bash
+python -m src.skill_extraction.clean_skill_dictionary
+```
+
+默认输出：
+
+- `dicts/occupation_skill_dictionary.cleaned.json`
+- `output/skill_extraction/reports/dictionary_cleaning/<timestamp>/cleaning_summary.json`
+- `output/skill_extraction/reports/dictionary_cleaning/<timestamp>/cleaning_details.csv`
+
+如果只想先看清洗结果，不写新词典：
+
+```bash
+python -m src.skill_extraction.clean_skill_dictionary --dry-run
+```
+
+如果确认结果后要直接覆盖原词典：
+
+```bash
+python -m src.skill_extraction.clean_skill_dictionary --in-place
+```
+
+覆盖模式会自动先备份原始词典，再写回清洗后的结果。
+
+## 词典格式
+
+词典统一保存在：
+
+- `dicts/occupation_skill_dictionary.json`
+
+示例：
+
+```json
+{
+  "metadata": {
+    "schema_version": 1,
+    "description": "按职业细类维护的技能词典"
+  },
+  "categories": {
+    "信息传输、软件和信息技术服务人员 > 软件和信息技术服务人员 > 软件开发人员 > 后端开发人员": {
+      "detail_name": "后端开发人员",
+      "hierarchy": {
+        "大类": "信息传输、软件和信息技术服务人员",
+        "中类": "软件和信息技术服务人员",
+        "小类": "软件开发人员",
+        "细类": "后端开发人员"
+      },
+      "skills": [
+        {
+          "name": "Python",
+          "aliases": ["python"],
+          "skill_type": "编程语言",
+          "notes": ""
+        }
+      ]
+    }
+  }
 }
-
-# 扩展参数
-topn = 20                    # 每个技能查找top-n相似词
-threshold = 0.5              # 相似度阈值（0.3-0.7）
 ```
 
-### BERT参数
+## 约束
 
-在 `bert_extractor.py` 中修改：
+- 职业技能词典必须保存在 `dicts/`。
+- 训练 prompt 只使用“任职要求”或其回退文本，避免把整段岗位描述直接送入 LLM。
+- 职业细类匹配统一使用 `D:\model\bge-base-zh-finetuned`。
+- 覆盖率默认目标为 95%。
+- 某职业细类未达标时，继续迭代验证与补词。
 
-```python
-# 模型选择
-model_name = "ckiplab/bert-base-chinese-ner"  # 中文NER模型
 
-# 处理参数
-max_length = 512             # 最大文本长度
-batch_size = 100             # 批处理大小
-score_threshold = 0.5        # 置信度阈值
-```
+请你读取@src\skill_extraction
+1，请生成一个脚本，读取技能词典@dicts\flat_skill_dictionary.json
+对数据库recruit.main.skill_extraction_requirement_matches的“任职要求_items_text”进行正则匹配，若字段为空，则选用“岗位职责_items_text”或者“岗位描述_清洗”。
+注意，词典中的aliases也要参与匹配
+2，生成的“skill_name”保存在recruit.main.hard_skill_match_results_dev
+3，请添加验证逻辑，使用本地Qwen3进行验证生成的skill_name。若缺少相应的skill或者匹配不正确的skill或者因为aliases不正确匹配了错误的skill，请及时更改词典
+4，请勿重复生成函数，请检查该项目是否已有相同功能的函数
+5，规范注释
 
-### 流水线参数
 
-在 `run_extraction_pipeline.py` 中修改：
 
-```python
-# 运行参数
-use_sample = True            # True=样本数据, False=全量数据
-max_rows = 1000              # BERT最大处理行数（快速测试用）
-```
-
-## 📊 输出说明
-
-### 1. Word2Vec输出
-
-**word2vec_expanded_skills.txt** - jieba词典格式
-```
-Python 20000 nz
-Java 20000 nz
-数据分析 20000 nz
-...
-```
-
-**word2vec_expansion_report.txt** - 详细报告
-```
-Python:
-  - pandas                  (相似度: 0.856)
-  - numpy                   (相似度: 0.823)
-  - sklearn                 (相似度: 0.791)
-  ...
-```
-
-### 2. BERT输出
-
-**bert_extracted_skills.txt** - jieba词典格式
-```
-Python 15000 nz
-机器学习 12000 nz
-数据分析 18000 nz
-...
-```
-
-**bert_skill_statistics.csv** - 技能统计
-```csv
-技能,出现次数
-Python,150
-Java,120
-数据分析,200
-...
-```
-
-### 3. 最终输出
-
-**final_expanded_skills.txt** - 合并后的最终词典
-```
-Python 20000 nz
-Java 20000 nz
-机器学习 20000 nz
-...
-```
-
-**final_extraction_report.txt** - 对比报告
-```
-总技能数: 500 个
-
-两种方法都发现: 120 个
-仅Word2Vec发现: 180 个
-仅BERT发现: 200 个
-
-技能列表：
-Python                         - seed, w2v(0.95), bert(150次)
-Java                           - seed, w2v(0.92), bert(120次)
-...
-```
-
-## 🔍 验证结果
-
-### 检查Word2Vec结果
-```bash
-# 查看扩展了多少技能
-wc -l output/skill_extraction/word2vec_expanded_skills.txt
-
-# 查看报告
-cat output/skill_extraction/word2vec_expansion_report.txt
-```
-
-### 检查BERT结果
-```bash
-# 查看提取了多少技能
-wc -l output/skill_extraction/bert_extracted_skills.txt
-
-# 查看统计
-head -20 output/skill_extraction/bert_skill_statistics.csv
-```
-
-### 检查最终结果
-```bash
-# 查看最终技能数
-wc -l output/skill_extraction/final_expanded_skills.txt
-
-# 查看对比报告
-cat output/skill_extraction/final_extraction_report.txt
-```
-
-## ⚠️ 注意事项
-
-### 1. 数据要求
-- 需要先运行NLP预处理（`src/nlp_analysis/text_preprocessing.py`）
-- 确保 `output/nlp_processed/` 目录下有处理后的数据
-
-### 2. 内存要求
-- Word2Vec：约1-2GB内存
-- BERT（CPU）：约4-8GB内存
-- BERT（GPU）：约2-4GB显存
-
-### 3. 运行时间
-- Word2Vec训练：5-10分钟（样本数据）
-- BERT提取（CPU）：30-60分钟（1000行）
-- BERT提取（GPU）：5-10分钟（1000行）
-
-### 4. GPU使用
-- 代码会自动检测GPU
-- 如果有GPU，BERT会自动使用
-- 如果没有GPU，会使用CPU（较慢）
-
-### 5. 模型下载
-- BERT模型首次运行会自动下载（约400MB）
-- 如果网络问题，可以手动下载后指定路径
-- 下载地址：https://huggingface.co/ckiplab/bert-base-chinese-ner
-
-## 🐛 常见问题
-
-### Q1: 提示"未找到数据文件"
-**A:** 需要先运行NLP预处理：
-```bash
-python src/nlp_analysis/text_preprocessing.py
-```
-
-### Q2: BERT模型下载失败
-**A:** 使用镜像源或手动下载：
-```bash
-# 使用镜像
-export HF_ENDPOINT=https://hf-mirror.com
-python src/skill_extraction/bert_extractor.py
-```
-
-### Q3: 内存不足
-**A:** 减少处理数据量：
-```python
-# 在代码中修改
-max_rows = 500  # 减少到500行
-```
-
-### Q4: GPU未被使用
-**A:** 检查PyTorch安装：
-```python
-import torch
-print(torch.cuda.is_available())  # 应该返回True
-```
-
-### Q5: Word2Vec训练很慢
-**A:** 减少训练轮数：
-```python
-epochs = 5  # 从10减少到5
-```
-
-## 📈 性能优化
-
-### 1. 使用GPU加速BERT
-```bash
-# 安装GPU版本的PyTorch
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-### 2. 增加批处理大小
-```python
-batch_size = 200  # 如果显存足够，可以增加
-```
-
-### 3. 使用多线程
-```python
-workers = 8  # Word2Vec训练时使用更多线程
-```
-
-### 4. 缓存模型
-```python
-# Word2Vec模型训练一次后可以重复使用
-train_new = False  # 加载已有模型
-```
-
-## 🔄 更新词典
-
-提取完成后，更新主词典：
-
-```bash
-# 备份原词典
-cp dicts/userdict_zh_recruitment.txt dicts/userdict_zh_recruitment.txt.bak
-
-# 合并新词典
-cat output/skill_extraction/final_expanded_skills.txt >> dicts/userdict_zh_recruitment.txt
-
-# 去重
-sort -u dicts/userdict_zh_recruitment.txt > dicts/userdict_zh_recruitment_new.txt
-mv dicts/userdict_zh_recruitment_new.txt dicts/userdict_zh_recruitment.txt
-```
-
-## 📞 技术支持
-
-如有问题，请查看：
-1. 代码中的详细注释
-2. 日志输出信息
-3. 生成的报告文件
-
----
-
-**祝使用顺利！** 🚀
-
+请你读取recruit.main.hard_skill_match_results_dev的前十行数据
+1，评判skill_name的提取准确率和覆盖率，并且总结为什么会不足或者错误
+2，根据你的总结修改匹配脚本@src\skill_extraction\match_flat_skills_to_duckdb.py
+和技能词典生成脚本@src\skill_extraction\occupation_skill_pipeline.py
+3，告诉我有没有更好的方法，提取出硬技能，兼顾准确率和效率
+4，规范注释

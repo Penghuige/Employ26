@@ -1,0 +1,7 @@
+# RAG 子模块依赖（建议在项目环境中补充安装）
+sentence-transformers>=3.0.0
+transformers>=4.40.0
+torch>=2.1.0
+faiss-cpu>=1.8.0
+pandas>=2.0.0
+openpyxl>=3.1.0

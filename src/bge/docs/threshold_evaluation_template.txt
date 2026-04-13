@@ -1,0 +1,85 @@
+阈值评估记录模板（适用于 Tier2 阶段）
+
+一、用途
+用于比较不同 MATCH_THRESHOLD 下的质量与覆盖率，快速确定线上阈值。
+
+二、建议文件名
+threshold_evaluation_template.csv
+
+三、评估流程（每次阈值实验固定执行）
+1) 固定模型版本（model_version）
+2) 固定同一份输入数据（data_version）
+3) 仅修改阈值（threshold）
+4) 记录分流统计 + 人工抽样质量
+5) 选择满足精度目标下覆盖率最高的阈值
+
+四、字段清单（建议列顺序）
+1. experiment_id
+   - 实验ID（如 exp_20260326_01）
+
+2. model_version
+   - 模型版本（如 bge-base-zh-finetuned-v2）
+
+3. data_version
+   - 数据版本（如 Tier2_Intermediate_Cache_20260326）
+
+4. threshold
+   - 当前阈值（如 0.70 / 0.75 / 0.80）
+
+5. total_count
+   - 总样本数
+
+6. matched_count
+   - 分数 >= 阈值 的样本数
+
+7. pending_count
+   - 分数 < 阈值 的样本数
+
+8. matched_rate
+   - matched_count / total_count
+
+9. sample_size_eval
+   - 本阈值下人工抽样量（建议固定 100）
+
+10. precision_est
+    - 人工抽样估计精度（正确数 / sample_size_eval）
+
+11. noise_rate_est
+    - 1 - precision_est
+
+12. recall_proxy
+    - 代理召回指标（可选）
+    - 建议定义：matched_count / total_count（仅作覆盖参考）
+
+13. f1_proxy
+    - 代理F1（可选）
+    - 若有gold可计算真实F1；没有可留空
+
+14. top_error_type_1
+15. top_error_type_2
+16. top_error_type_3
+    - 该阈值下前三错误类型
+
+17. decision
+    - 决策建议：accept / reject / candidate
+
+18. notes
+    - 备注（如“0.75精度达标且覆盖最佳”）
+
+五、推荐决策规则（贴合招聘趋势分析场景）
+1) 先看 precision_est：目标 >= 0.85
+2) 在满足精度目标的阈值中，选 matched_rate 更高者
+3) 若两个阈值精度差<1%，优先更高阈值（降低噪声）
+
+六、可直接复制的CSV表头
+experiment_id,model_version,data_version,threshold,total_count,matched_count,pending_count,matched_rate,sample_size_eval,precision_est,noise_rate_est,recall_proxy,f1_proxy,top_error_type_1,top_error_type_2,top_error_type_3,decision,notes
+
+七、示例记录
+exp_20260326_01,bge-base-zh-finetuned-v2,Tier2_Intermediate_Cache_20260326,0.70,381342,117504,263838,0.3081,100,0.79,0.21,0.3081,,assistant_intern_confusion,coarse_to_fine_mismatch,desc_noise,reject,精度低于0.85
+exp_20260326_02,bge-base-zh-finetuned-v2,Tier2_Intermediate_Cache_20260326,0.75,381342,96540,284802,0.2532,100,0.86,0.14,0.2532,,coarse_to_fine_mismatch,dictionary_gap,desc_noise,candidate,达到精度目标
+exp_20260326_03,bge-base-zh-finetuned-v2,Tier2_Intermediate_Cache_20260326,0.80,381342,80210,301132,0.2103,100,0.90,0.10,0.2103,,dictionary_gap,title_ambiguous,desc_noise,candidate,精度更高但覆盖下降较多
+
+八、执行建议
+1) 每轮至少评估 3~6 个阈值
+2) 每个阈值人工抽样量固定（避免统计偏差）
+3) 每周沉淀一次最优阈值并版本化记录

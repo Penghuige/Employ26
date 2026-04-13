@@ -3,10 +3,12 @@ data/
 *.csv
 *.xlsx
 *.xls
+*.json
 
 # 输出文件
 output/
 !output/.gitkeep
+src/bge/data5/
 
 # Python
 __pycache__/
@@ -39,10 +41,14 @@ venv/
 env/
 ENV/
 .venv
+.conda/
+
 
 # IDE
 .vscode/
 .idea/
+.claude/
+。cursor/
 *.swp
 *.swo
 *~

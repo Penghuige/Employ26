@@ -1,0 +1,194 @@
+<View>
+  <Style>
+    .page { padding: 10px; }
+    .htx-text { white-space: pre-wrap; }
+    .htx-text p { margin: 0 0 4px 0; }
+    .htx-text p:last-child { margin-bottom: 0; }
+    .htx-text h1, .htx-text h2, .htx-text h3 { margin: 0 0 6px 0; }
+    .req-box {
+      border: 1px solid #d7dde5;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 8px;
+      background: #ffffff;
+    }
+    .label-panel {
+      border: 1px solid #d7dde5;
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      background: #ffffff;
+    }
+    .label-row {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      margin-bottom: 3px;
+      flex-wrap: wrap;
+    }
+    .label-row:last-child { margin-bottom: 0; }
+    .label-title {
+      min-width: 68px;
+      font-weight: 600;
+      margin: 0;
+    }
+    .option-box {
+      border: 1px solid #e6ebf1;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      background: #fcfcfd;
+    }
+    .candidate-section {
+      border-top: 1px solid #e6ebf1;
+      padding-top: 10px;
+    }
+    .req-mini-box {
+      border: 1px solid #e6ebf1;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: #fcfcfd;
+    }
+    .candidate-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .candidate-card {
+      width: calc(50% - 4px);
+      min-width: 220px;
+      border: 1px solid #d7dde5;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #fafbfc;
+      box-sizing: border-box;
+    }
+    .candidate-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .compact-header {
+      margin: 0 0 6px 0;
+    }
+  </Style>
+
+  <View className="page">
+    <Header value="岗位软技能 + 职业候选人工标注" />
+    <Text name="row_id_text" value="$row_id" />
+    <Text name="job_title_text" value="$job_title" />
+
+    <Header value="清洗后的岗位要求" />
+    <Text name="req_hint_1" value="先阅读文本，再框选 span 并在下方选择标签。" />
+    <Text name="req_hint_2" value="如果整段岗位要求不存在软技能，请直接勾选下方“不存在软技能”。" />
+
+    <View className="req-box">
+      <Text name="job_requirements_text" value="$job_requirements_clean" granularity="word" />
+    </View>
+
+    <Header value="Span 标签" />
+    <View className="label-panel">
+      <View className="label-row">
+        <Text name="group_open_text" value="开放性：" className="label-title" />
+        <Text name="group_open_desc" value="富有想象力、好奇、审美敏锐、喜欢冒险、思想开放、兴趣广泛、创新、非传统" />
+        <Labels name="softskill_open_labels" toName="job_requirements_text" showInline="true">
+          <Label value="开放性" background="#F4D03F" />
+        </Labels>
+      </View>
+
+      <View className="label-row">
+        <Text name="group_conscientious_text" value="尽责性：" className="label-title" />
+        <Text name="group_conscientious_desc" value="有条理、自律、可靠、勤奋、追求成就、细心、负责任、有规划、高效" />
+        <Labels name="softskill_conscientious_labels" toName="job_requirements_text" showInline="true">
+          <Label value="尽责性" background="#16A085" />
+        </Labels>
+      </View>
+
+      <View className="label-row">
+        <Text name="group_extraversion_text" value="外向性：" className="label-title" />
+        <Text name="group_extraversion_desc" value="健谈、精力充沛、自信、热情、喜欢社交、活跃、果断、乐观、寻求刺激" />
+        <Labels name="softskill_extraversion_labels" toName="job_requirements_text" showInline="true">
+          <Label value="外向性" background="#5DADE2" />
+        </Labels>
+      </View>
+
+      <View className="label-row">
+        <Text name="group_agreeable_text" value="宜人性：" className="label-title" />
+        <Text name="group_agreeable_desc" value="有同情心、信任他人、合作、谦逊、友善、利他、体贴、温和、真诚" />
+        <Labels name="softskill_agreeable_labels" toName="job_requirements_text" showInline="true">
+          <Label value="宜人性" background="#EC7063" />
+        </Labels>
+      </View>
+
+      <View className="label-row">
+        <Text name="group_stability_text" value="情绪稳定性：" className="label-title" />
+        <Text name="group_stability_desc" value="冷静、放松、沉着、不易焦虑、情绪平稳、抗压能力强、从容、心态平和、稳定、镇定、不易沮丧" />
+        <Labels name="softskill_stability_labels" toName="job_requirements_text" showInline="true">
+          <Label value="情绪稳定性" background="#AF7AC5" />
+        </Labels>
+      </View>
+    </View>
+
+    <View className="option-box">
+      <Header value="整体判断" />
+      <Choices name="no_softskill_choice" toName="job_requirements_text" choice="single-radio" showInline="true">
+        <Choice value="不存在软技能" />
+      </Choices>
+    </View>
+
+    <View className="candidate-section">
+      <Header value="职业候选选择（5选1）" />
+      <Text name="choice_hint_1" value="候选顺序已随机打乱。先快速对照岗位要求，再选择最合适的职业。" />
+
+      <View className="req-mini-box">
+        <Header value="清洗后的岗位要求（便于对照）" />
+        <Text name="job_requirements_text_mini" value="$job_requirements_clean" />
+      </View>
+
+      <View className="candidate-grid">
+        <View className="candidate-card">
+          <Text name="candidate_a_text" value="候选A：$candidate_a_title" className="candidate-title" />
+          <Text name="candidate_a_desc_text" value="$candidate_a_desc" />
+        </View>
+
+        <View className="candidate-card">
+          <Text name="candidate_b_text" value="候选B：$candidate_b_title" className="candidate-title" />
+          <Text name="candidate_b_desc_text" value="$candidate_b_desc" />
+        </View>
+
+        <View className="candidate-card">
+          <Text name="candidate_c_text" value="候选C：$candidate_c_title" className="candidate-title" />
+          <Text name="candidate_c_desc_text" value="$candidate_c_desc" />
+        </View>
+
+        <View className="candidate-card">
+          <Text name="candidate_d_text" value="候选D：$candidate_d_title" className="candidate-title" />
+          <Text name="candidate_d_desc_text" value="$candidate_d_desc" />
+        </View>
+
+        <View className="candidate-card">
+          <Text name="candidate_e_text" value="候选E：$candidate_e_title" className="candidate-title" />
+          <Text name="candidate_e_desc_text" value="$candidate_e_desc" />
+        </View>
+      </View>
+
+      <Choices name="best_candidate_choice" toName="job_requirements_text" choice="single-radio" showInline="true" required="true">
+        <Choice value="候选A" />
+        <Choice value="候选B" />
+        <Choice value="候选C" />
+        <Choice value="候选D" />
+        <Choice value="候选E" />
+        <Choice value="以上选项都不属于" />
+      </Choices>
+
+      <TextArea
+        name="choice_reason"
+        toName="job_requirements_text"
+        rows="4"
+        maxSubmissions="1"
+        placeholder="可选：记录你为什么选择这个候选，或说明有歧义的地方。"
+      />
+    </View>
+  </View>
+</View>

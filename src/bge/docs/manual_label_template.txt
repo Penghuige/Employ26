@@ -1,0 +1,116 @@
+人工标注模板字段设计（适用于 Tier1 / Tier2 / Tier3）
+
+一、用途
+本模板用于统一人工质检与错误分析，支持：
+1) 计算分层精度（Tier1/Tier2/Tier3）
+2) 追踪主要错误类型
+3) 沉淀可用于后续微调的数据（gold_code）
+
+二、建议文件名
+manual_label_template.csv
+
+三、字段清单（建议列顺序）
+1. sample_id
+   - 类型：string
+   - 说明：样本唯一ID（建议使用源数据行号+阶段前缀，如 T2_000123）
+
+2. stage
+   - 类型：string
+   - 说明：样本来源阶段
+   - 取值：tier1 / tier2 / tier3
+
+3. source_file
+   - 类型：string
+   - 说明：样本来源文件名
+   - 示例：Tier2_Matched_Data.csv
+
+4. row_index
+   - 类型：int
+   - 说明：源文件中的行号（便于回溯）
+
+5. 岗位名称
+   - 类型：string
+   - 说明：原始岗位标题
+
+6. 岗位描述
+   - 类型：string
+   - 说明：原始岗位描述（可截断到前500字符方便标注）
+
+7. predicted_title
+   - 类型：string
+   - 说明：模型/规则当前预测职业名称
+   - 示例：tier1_matched_title 或 tier2_matched_title
+
+8. predicted_code
+   - 类型：string
+   - 说明：模型/规则当前预测职业代码
+   - 示例：tier1_matched_code 或 tier2_matched_code
+
+9. predicted_score
+   - 类型：float
+   - 说明：当前分数
+   - 示例：tier1_match_score 或 tier2_match_score
+
+10. is_correct
+    - 类型：int
+    - 说明：人工判定是否正确
+    - 取值：1=正确，0=错误
+
+11. gold_title
+    - 类型：string
+    - 说明：人工确认的正确职业名称（若不确定可留空）
+
+12. gold_code
+    - 类型：string
+    - 说明：人工确认的正确职业代码（核心字段）
+
+13. error_type
+    - 类型：string
+    - 说明：错误类型（错误时必填）
+    - 建议枚举：
+      a) title_ambiguous                 # 岗位标题歧义
+      b) desc_noise                      # 描述噪声过多
+      c) assistant_intern_confusion      # 助理/实习/学徒混淆
+      d) coarse_to_fine_mismatch         # 粗细粒度错位
+      e) cross_domain_confusion          # 跨行业语义误匹配
+      f) dictionary_gap                  # 大典词典覆盖不足
+      g) low_confidence_borderline       # 阈值边界误差
+      h) other
+
+14. error_note
+    - 类型：string
+    - 说明：补充备注（为什么错、正确依据是什么）
+
+15. reviewer
+    - 类型：string
+    - 说明：标注人
+
+16. review_time
+    - 类型：string/datetime
+    - 说明：标注时间
+
+四、填写规范（强约束）
+1) is_correct=1 时：
+   - gold_code 建议填写（用于后续监督训练）
+   - error_type / error_note 可留空
+
+2) is_correct=0 时：
+   - error_type 必填
+   - gold_code 尽量填写；若无法确定，error_note 说明原因
+
+3) 不允许修改原始字段（岗位名称/岗位描述/predicted_*）
+
+4) 多人标注时，reviewer 必填；建议双人复核冲突样本
+
+五、建议抽样配额（每轮）
+1) Tier1_Matched：100条（检查规则误伤）
+2) Tier2_Matched：100条（检查模型高分错配）
+3) Tier3_Pending：100条（检查漏召）
+总计：300条/轮
+
+六、可直接复制的CSV表头
+sample_id,stage,source_file,row_index,岗位名称,岗位描述,predicted_title,predicted_code,predicted_score,is_correct,gold_title,gold_code,error_type,error_note,reviewer,review_time
+
+七、示例记录
+T2_000123,tier2,Tier2_Matched_Data.csv,123,电工,负责设备线路检修...持证上岗,电工,6-31-01-03,0.86,1,电工,6-31-01-03,,,alice,2026-03-26 21:30:00
+T2_000456,tier2,Tier2_Matched_Data.csv,456,会计助理,协助财务核算与报表整理,会计,2-06-03-00,0.78,0,秘书,3-01-02-02,assistant_intern_confusion,岗位核心职责偏行政支持,bob,2026-03-26 21:36:00

@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 def generate_wordcloud_data():
     """生成词云数据"""
-    base_dir = Path('d:/pythonProject/leisure/Employ26')
+    base_dir = Path(__file__).parent.parent.parent
     nlp_dir = base_dir / 'output' / 'nlp_processed'
     output_dir = base_dir / 'output' / 'reports'
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     logger.info("=" * 80)
     logger.info("词云数据生成")

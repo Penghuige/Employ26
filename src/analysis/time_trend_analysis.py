@@ -1,6 +1,25 @@
 """
-时间趋势分析模块
-分析2022-2025年的招聘量、技能需求、薪资变化趋势
+旧版时间趋势分析模块。
+
+用途:
+- 基于 `output/nlp_processed/*.csv` 统计招聘量、热门岗位和关键词技能的时间变化趋势。
+- 输出文本报告和 HTML 趋势图，适合做早期的宏观浏览。
+
+前置依赖:
+- 需要旧版 NLP 结果目录 `output/nlp_processed`。
+- 数据里应包含 `发布时间`、`岗位名称`、`关键词` 等字段。
+
+输出文件:
+- `output/reports/时间趋势分析报告.txt`
+- `output/reports/时间趋势图.html`
+
+运行方式:
+- `python -m src.analysis.time_trend_analysis`
+- 或 `python src/analysis/time_trend_analysis.py`
+
+维护说明:
+- 本脚本没有使用 `preprocessing/integrate_occupation.py` 产出的标准化月份、职业和行业字段。
+- 相比当前 `industry_trend_analysis.py` 与 `occupation_salary_analysis.py`，它的数据口径更旧，适合作为补充探索而非主报告。
 """
 
 import pandas as pd
@@ -14,10 +33,10 @@ logger = logging.getLogger(__name__)
 
 def analyze_time_trends():
     """分析时间趋势"""
-    base_dir = Path('d:/pythonProject/leisure/Employ26')
+    base_dir = Path(__file__).parent.parent.parent
     nlp_dir = base_dir / 'output' / 'nlp_processed'
     output_dir = base_dir / 'output' / 'reports'
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     logger.info("=" * 80)
     logger.info("时间趋势分析")
@@ -320,4 +339,3 @@ def analyze_time_trends():
 
 if __name__ == '__main__':
     analyze_time_trends()
-

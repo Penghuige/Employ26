@@ -1,0 +1,163 @@
+scoring:
+  title_weight: 0.45
+  task_weight: 0.30
+  desc_weight: 0.15
+  hierarchy_weight: 0.10
+  alias_bonus: 0.10
+  title_direct_bonus: 0.18
+  title_fuzzy_threshold: 0.82
+  task_overlap_bonus: 0.08
+  generic_title_penalty: 0.08
+  conflict_penalty: 0.12
+  low_confidence_margin: 0.08
+  low_confidence_score_threshold: 0.35
+  top_k: 5
+
+retrieval:
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  char_ngram_n: 2
+  candidate_pool_size: 30
+  stopwords_path: dicts/stopwords_recruitment_short.txt
+
+alias:
+  weak_suffixes:
+    - 员
+    - 师
+    - 工
+  manual_mapping:
+    导购: 商品营业员
+    送餐员: 网约配送员
+    骑手: 网约配送员
+    外卖员: 网约配送员
+    外卖骑手: 网约配送员
+    配送员: 网约配送员
+
+job_title_cleaning:
+  noise_phrases:
+    - 急聘
+    - 诚聘
+    - 直招
+    - 高薪
+    - 包吃住
+    - 五险一金
+    - 双休
+    - 带娃工作两不误
+    - 提供导师一对一
+    - 单量多
+    - 朝九晚四
+    - 唯才是举
+    - 提供食宿
+    - 就近安排
+    - 可预支
+    - 无责底薪
+  pure_noise_patterns:
+    - '^朝九晚四.*$'
+    - '^唯才是举.*$'
+    - '^带娃工作两不误.*$'
+  salary_patterns:
+    - '月入\s*\d+(?:\.\d+)?[万wW千kK]?'
+    - '底薪\s*\d+(?:\.\d+)?[万wW千kK]?'
+    - '\d+(?:\.\d+)?[万wW千kK]\s*[-~到至]\s*\d+(?:\.\d+)?[万wW千kK]'
+    - '\d+(?:\.\d+)?\s*元/天'
+    - '\d+(?:\.\d+)?\s*元/小时'
+    - '\d+(?:\.\d+)?\s*k(?:/月)?'
+  title_tail_code_patterns:
+    - '[A-Za-z]{1,4}\d{2,}[A-Za-z0-9]*$'
+    - '\d{3,}[A-Za-z]{1,4}$'
+  separator_noise_patterns:
+    - '包吃住'
+    - '五险一金'
+    - '双休'
+    - '高薪'
+    - '门店'
+    - '万达店'
+    - '北京路店'
+    - '天河城'
+    - '单量多'
+    - '提供导师'
+  location_suffixes:
+    - 天河城北京路店
+    - 北京路店
+    - 万达店
+    - 福田
+    - 龙岗
+    - 南山
+    - 罗湖
+    - 天河
+    - 白云
+    - 越秀
+    - 海珠
+    - 番禺
+    - 宝安
+    - 龙华
+
+jd_parsing:
+  action_verbs:
+    - 负责
+    - 参与
+    - 制定
+    - 维护
+    - 推进
+    - 撰写
+    - 分析
+    - 跟进
+    - 接待
+    - 销售
+    - 配送
+    - 核算
+    - 设计
+    - 开发
+    - 统筹
+    - 沟通
+    - 协调
+    - 审核
+    - 测试
+    - 上线
+  domain_keywords:
+    - 金融
+    - 风控
+    - 银行
+    - 医疗
+    - 药品
+    - 零售
+    - 商超
+    - 制造
+    - 工厂
+    - 供应链
+    - 电商
+    - 物流
+    - 配送
+    - 餐饮
+    - 教育
+    - 互联网
+    - SaaS
+    - 汽车
+    - 人力资源
+    - 财务
+    - 审计
+    - 法务
+    - 客服
+    - 运营
+    - 销售
+
+hierarchy:
+  keyword_dict_path: dicts/hierarchy_keyword_to_major_auto.txt
+  keyword_to_major:
+    技术: 2
+    开发: 2
+    工程: 2
+    算法: 2
+    销售: 4
+    客户: 4
+    导购: 4
+    配送: 6
+    骑手: 6
+    物流: 6
+    财务: 5
+    审计: 5
+    法务: 5
+    护理: 7
+    医疗: 7
+    教师: 8
+    教育: 8
