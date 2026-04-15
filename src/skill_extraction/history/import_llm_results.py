@@ -2,15 +2,15 @@
 导入 LLM 返回的职业技能词典 JSON。
 
 用法示例：
-python -m src.skill_extraction.import_llm_results --input output/skill_extraction/llm_outputs
-python -m src.skill_extraction.import_llm_results --input some_result.md --dry-run
+python -m src.skill_extraction.history.import_llm_results --input output/skill_extraction/llm_outputs
+python -m src.skill_extraction.history.import_llm_results --input some_result.md --dry-run
 """
 
 from __future__ import annotations
 
 import argparse
 
-from .config import load_skill_extraction_config
+from ..config import load_skill_extraction_config
 from .occupation_skill_pipeline import OccupationSkillPipeline
 
 

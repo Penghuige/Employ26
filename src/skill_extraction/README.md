@@ -1,203 +1,141 @@
-# 技能词典流程
+# Skill Extraction
 
-当前 `src/skill_extraction` 目录只保留和“职业细类技能词典”直接相关的脚本，不再保留旧的 Word2Vec / BERT / 实验型技能抽取脚本。
+`src/skill_extraction` 当前分成两套入口：
 
-## 目录职责
+- `v1`
+  历史版，按职业细类分层维护技能词典，相关模块已收拢到 `history/`
+- `v2`
+  当前主流程，直接构造平面化职业硬技能词典，并支持自动评测、自动标注和二阶段过滤
 
-- `config.py`
-  读取 `config/database.yaml`，统一 DuckDB、BGE 模型、输出目录、词典目录配置。
-- `bge_matcher.py`
-  使用 `D:\model\bge-base-zh-finetuned` 做职业细类匹配，返回 Top5 候选，并按 Top1 到 Top5 依次回退选择首个可用细类。
-- `data_source.py`
-  从 DuckDB 读取招聘样本，匹配职业细类，生成训练清单和验证池。
-- `dictionary_store.py`
-  统一管理 `dicts/occupation_skill_dictionary.json`。
-- `import_llm_results.py`
-  把 LLM 输出的 `JSON / Markdown / 文本` 结果自动解析并合并回职业技能词典。
-- `clean_skill_dictionary.py`
-  清洗职业技能词典，移除软技能、学历门槛、福利待遇、工作时间等非硬技能噪音，并输出审计报告。
-- `init_llm_output_layout.py`
-  初始化 `output/skill_extraction/llm_outputs` 目录规范模板。
-- `coverage.py`
-  评估职业细类技能词典对验证集“任职要求”条目的覆盖率。
-- `occupation_skill_pipeline.py`
-  主 CLI。负责抽样、切割任职要求、生成 LLM prompt、覆盖率验证与迭代补词。
+## 目录说明
 
-## 流程说明
+- [pipeline_v1.py](/d:/PythonProjects/Employ26/src/skill_extraction/pipeline_v1.py:1)
+  `v1` 入口
+- [pipeline_v2.py](/d:/PythonProjects/Employ26/src/skill_extraction/pipeline_v2.py:1)
+  `v2` 平面词典构造入口
+- [occupation_skill_pipeline.py](/d:/PythonProjects/Employ26/src/skill_extraction/occupation_skill_pipeline.py:1)
+  `v2` 主实现
+- [match_flat_skills_to_duckdb.py](/d:/PythonProjects/Employ26/src/skill_extraction/match_flat_skills_to_duckdb.py:1)
+  平面词典匹配、LLM 抽检、上下文判别接入
+- [regression_eval.py](/d:/PythonProjects/Employ26/src/skill_extraction/regression_eval.py:1)
+  回归评测
+- [llm_label_regression_dataset.py](/d:/PythonProjects/Employ26/src/skill_extraction/llm_label_regression_dataset.py:1)
+  自动生成回归集
+- [llm_label_context_dataset.py](/d:/PythonProjects/Employ26/src/skill_extraction/llm_label_context_dataset.py:1)
+  自动生成上下文判别训练集
+- [context_classifier.py](/d:/PythonProjects/Employ26/src/skill_extraction/context_classifier.py:1)
+  多分类上下文判别器
+- [DESIGN_v2.md](/d:/PythonProjects/Employ26/src/skill_extraction/DESIGN_v2.md:1)
+  详细设计文档
 
-1. 每个职业细类默认抽取 100 条训练样本。
-2. 训练样本通过 `src.preprocessing.parse_desc.parse_desc_df` 切出“任职要求”，减少发给 LLM 的 token。
-3. LLM 根据每个细类的训练 prompt 输出技能词典，并写回 `dicts/occupation_skill_dictionary.json`。
-4. 每轮从同一细类的验证池中再随机抽 10 条作为验证集。
-5. 如果某细类覆盖率低于 95%，自动生成补词 prompt，补词后继续下一轮验证。
-
-## 使用方式
-
-### 1. 生成训练样本与训练 prompt
+## v1 运行方式
 
 ```bash
-python -m src.skill_extraction.occupation_skill_pipeline prepare ^
-  --train-size 100 ^
-  --validation-batch-size 10 ^
-  --parse-workers 1
+python -m src.skill_extraction.pipeline_v1 prepare
+python -m src.skill_extraction.pipeline_v1 iterate
+python -m src.skill_extraction.pipeline_v1 status
 ```
 
-输出：
+`v1` 适合需要保留“职业细类 -> 技能词典”分层结构的场景。
 
-- `output/skill_extraction/occupation_skill_training_manifest.csv`
-- `output/skill_extraction/occupation_skill_training_requirements.csv`
-- `output/skill_extraction/occupation_skill_validation_pool.csv`
-- `output/skill_extraction/occupation_skill_category_summary.csv`
-- `output/skill_extraction/prompts/train/*.md`
-- `dicts/occupation_skill_dictionary.json`
+## v2 运行流程
 
-### 2. 执行一轮覆盖率验证
+### 1. 构造平面词典
 
 ```bash
-python -m src.skill_extraction.occupation_skill_pipeline iterate ^
-  --validation-batch-size 10 ^
-  --coverage-threshold 0.95 ^
-  --parse-workers 1
+python -m src.skill_extraction.pipeline_v2
 ```
 
-输出：
-
-- `output/skill_extraction/reports/round_XX/validation_samples.csv`
-- `output/skill_extraction/reports/round_XX/coverage_summary.csv`
-- `output/skill_extraction/reports/round_XX/coverage_items.csv`
-- `output/skill_extraction/reports/round_XX/uncovered_items.csv`
-- `output/skill_extraction/prompts/supplement/round_XX/*.md`
-
-### 3. 导入 LLM 返回的 JSON
+### 2. 自动生成回归集
 
 ```bash
-python -m src.skill_extraction.import_llm_results ^
-  --input output/skill_extraction/llm_outputs
+python -m src.skill_extraction.llm_label_regression_dataset ^
+  --sample-size 400 ^
+  --num-votes 3
 ```
 
-### 4. 初始化 LLM 输出目录模板
+### 3. 自动生成上下文训练集
 
 ```bash
-python -m src.skill_extraction.init_llm_output_layout
+python -m src.skill_extraction.llm_label_context_dataset ^
+  --regression-dataset output/skill_extraction/regression/flat_skill_regression_dataset.jsonl ^
+  --dictionary dicts/flat_skill_dictionary.json ^
+  --num-votes 3
 ```
 
-默认会生成：
-
-- `output/skill_extraction/llm_outputs/README.md`
-- `output/skill_extraction/llm_outputs/train/round_00/raw/`
-- `output/skill_extraction/llm_outputs/train/round_00/json/`
-- `output/skill_extraction/llm_outputs/train/round_00/imported/`
-- `output/skill_extraction/llm_outputs/supplement/round_01/raw/`
-- `output/skill_extraction/llm_outputs/supplement/round_01/json/`
-- `output/skill_extraction/llm_outputs/supplement/round_01/imported/`
-- `output/skill_extraction/llm_outputs/examples/*.json`
-
-支持：
-
-- 单个 `.json`
-- 单个 `.md`
-- 单个 `.txt`
-- 一个目录下的上述文件，默认递归扫描
-
-如果只想先看导入结果，不写回词典：
+### 4. 训练上下文判别器
 
 ```bash
-python -m src.skill_extraction.import_llm_results ^
-  --input output/skill_extraction/llm_outputs ^
-  --dry-run
+python -m src.skill_extraction.context_classifier train ^
+  --dataset output/skill_extraction/context_classifier/context_dataset_llm.jsonl ^
+  --output-dir output/skill_extraction/context_classifier/model
 ```
 
-### 5. 查看当前状态
+### 5. 运行回归评测
 
 ```bash
-python -m src.skill_extraction.occupation_skill_pipeline status
+python -m src.skill_extraction.regression_eval ^
+  --dataset output/skill_extraction/regression/flat_skill_regression_dataset.jsonl ^
+  --dictionary dicts/flat_skill_dictionary.json ^
+  --fail-under-precision 0.90 ^
+  --fail-under-f1 0.80
 ```
 
-### 6. 清洗技能词典中的软技能与招聘噪音
+### 6. 启用二阶段过滤做匹配
 
 ```bash
-python -m src.skill_extraction.clean_skill_dictionary
+python -m src.skill_extraction.match_flat_skills_to_duckdb match ^
+  --dictionary dicts/flat_skill_dictionary.json ^
+  --context-classifier-model output/skill_extraction/context_classifier/model ^
+  --context-threshold 0.80
 ```
 
-默认输出：
+## 当前 v2 的原理
 
-- `dicts/occupation_skill_dictionary.cleaned.json`
-- `output/skill_extraction/reports/dictionary_cleaning/<timestamp>/cleaning_summary.json`
-- `output/skill_extraction/reports/dictionary_cleaning/<timestamp>/cleaning_details.csv`
+### 词典构造
 
-如果只想先看清洗结果，不写新词典：
+1. 读取 DuckDB 中已完成职业匹配的岗位文本
+2. 按职业中类采样
+3. 用本地 LLM 抽取硬技能并构造平面词典
 
-```bash
-python -m src.skill_extraction.clean_skill_dictionary --dry-run
+### 词典匹配
+
+1. 第一阶段做高速词典召回
+2. 第二阶段用多分类上下文判别器过滤误报
+3. 最终把保留下来的技能写回 DuckDB
+
+### 自动训练数据
+
+1. 用 LLM 从 JD 自动生成 `gold_skills`
+2. 用 LLM 对词典召回候选打多分类标签
+3. 用这些自动标注数据训练上下文判别器
+
+## 标签定义
+
+- `valid_hard_skill`
+  候选在当前文本中是有效硬技能
+- `too_generic`
+  候选过于泛化，不适合作为技能词典项
+- `wrong_alias_mapping`
+  alias 命中了文本，但语义不属于当前技能
+- `not_skill`
+  命中内容不是硬技能
+
+## 配置来源
+
+统一读取：
+
+- [config/database.yaml](/d:/PythonProjects/Employ26/config/database.yaml:1)
+
+当前关键字段：
+
+```yaml
+LLM_model_path: D:/model/Qwen3-8B
+BERT_path: D:\model\chinese-roberta-wwm-ext
 ```
 
-如果确认结果后要直接覆盖原词典：
+## 说明
 
-```bash
-python -m src.skill_extraction.clean_skill_dictionary --in-place
-```
-
-覆盖模式会自动先备份原始词典，再写回清洗后的结果。
-
-## 词典格式
-
-词典统一保存在：
-
-- `dicts/occupation_skill_dictionary.json`
-
-示例：
-
-```json
-{
-  "metadata": {
-    "schema_version": 1,
-    "description": "按职业细类维护的技能词典"
-  },
-  "categories": {
-    "信息传输、软件和信息技术服务人员 > 软件和信息技术服务人员 > 软件开发人员 > 后端开发人员": {
-      "detail_name": "后端开发人员",
-      "hierarchy": {
-        "大类": "信息传输、软件和信息技术服务人员",
-        "中类": "软件和信息技术服务人员",
-        "小类": "软件开发人员",
-        "细类": "后端开发人员"
-      },
-      "skills": [
-        {
-          "name": "Python",
-          "aliases": ["python"],
-          "skill_type": "编程语言",
-          "notes": ""
-        }
-      ]
-    }
-  }
-}
-```
-
-## 约束
-
-- 职业技能词典必须保存在 `dicts/`。
-- 训练 prompt 只使用“任职要求”或其回退文本，避免把整段岗位描述直接送入 LLM。
-- 职业细类匹配统一使用 `D:\model\bge-base-zh-finetuned`。
-- 覆盖率默认目标为 95%。
-- 某职业细类未达标时，继续迭代验证与补词。
-
-
-请你读取@src\skill_extraction
-1，请生成一个脚本，读取技能词典@dicts\flat_skill_dictionary.json
-对数据库recruit.main.skill_extraction_requirement_matches的“任职要求_items_text”进行正则匹配，若字段为空，则选用“岗位职责_items_text”或者“岗位描述_清洗”。
-注意，词典中的aliases也要参与匹配
-2，生成的“skill_name”保存在recruit.main.hard_skill_match_results_dev
-3，请添加验证逻辑，使用本地Qwen3进行验证生成的skill_name。若缺少相应的skill或者匹配不正确的skill或者因为aliases不正确匹配了错误的skill，请及时更改词典
-4，请勿重复生成函数，请检查该项目是否已有相同功能的函数
-5，规范注释
-
-
-
-请你读取recruit.main.hard_skill_match_results_dev的前十行数据
-1，评判skill_name的提取准确率和覆盖率，并且总结为什么会不足或者错误
-2，根据你的总结修改匹配脚本@src\skill_extraction\match_flat_skills_to_duckdb.py
-和技能词典生成脚本@src\skill_extraction\occupation_skill_pipeline.py
-3，告诉我有没有更好的方法，提取出硬技能，兼顾准确率和效率
-4，规范注释
+- `v1` 的相关功能模块已经整体下沉到 `history/`
+- `v2` 的词典构造主逻辑保持不变，这次新增的是自动标注、回归评测和多分类上下文过滤链路
+- 更完整的设计说明见 [DESIGN_v2.md](/d:/PythonProjects/Employ26/src/skill_extraction/DESIGN_v2.md:1)

@@ -1,10 +1,12 @@
-"""
-技能词典流程配置模块。
+"""`skill_extraction` 模块的统一配置入口。
 
-职责：
-1. 统一读取 `config/database.yaml`；
-2. 规范 `src/skill_extraction` 产物目录；
-3. 规范职业细类匹配与职业技能词典的存储位置。
+本模块负责三件事：
+1. 从 `config/database.yaml` 读取项目配置；
+2. 将配置解析为结构化的 `SkillExtractionConfig`；
+3. 统一约定技能抽取相关的输入表、输出目录和模型路径。
+
+设计目标是让上层脚本不再分别拼接路径、猜测表名或硬编码模型目录，
+而是共享同一份可复用、可追踪的配置对象。
 """
 
 from __future__ import annotations
@@ -20,7 +22,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _split_table_names(value: object) -> List[str]:
-    """解析 jobs_table 配置，支持逗号分隔字符串或 YAML 列表。"""
+    """解析 `jobs_table` 配置项，兼容列表和逗号分隔字符串。
+
+    参数:
+        value: 原始配置值，可能为 `None`、YAML 列表或字符串。
+
+    返回:
+        List[str]: 过滤空值并去除首尾空白后的表名列表。
+    """
     if value is None:
         return []
     if isinstance(value, list):
@@ -29,7 +38,21 @@ def _split_table_names(value: object) -> List[str]:
 
 
 def qualify_table_name(table_name: str, catalog: str = "recruit", schema: str = "main") -> str:
-    """补齐未带 catalog/schema 前缀的 DuckDB 表名。"""
+    """补齐 DuckDB 表名的 catalog / schema 前缀。
+
+    参数:
+        table_name: 原始表名，支持一段式、两段式或三段式。
+        catalog: 默认 catalog 名称。
+        schema: 默认 schema 名称。
+
+    返回:
+        str: 统一后的全限定表名。
+
+    说明:
+        - 一段式: `table` -> `catalog.schema.table`
+        - 两段式: `schema.table` -> `catalog.schema.table`
+        - 三段式: 原样返回
+    """
     normalized = str(table_name).strip()
     if not normalized:
         raise ValueError("table_name 不能为空")
@@ -42,12 +65,21 @@ def qualify_table_name(table_name: str, catalog: str = "recruit", schema: str = 
 
 @dataclass(frozen=True)
 class SkillExtractionConfig:
-    """技能词典流程配置。"""
+    """技能抽取主链路使用的结构化配置对象。
+
+    该对象集中保存：
+    - DuckDB 连接信息
+    - Embedding / LLM / BERT 模型路径
+    - 输入表名
+    - 词典、缓存、报告和中间产物路径
+    """
 
     project_root: Path
     db_path: Path
     duckdb_threads: int
     embedding_model_path: Path
+    llm_model_path: Path
+    bert_model_path: Path
     embedding_device: str
     embedding_batch_size: int
     match_top_k: int
@@ -70,7 +102,15 @@ class SkillExtractionConfig:
     state_path: Path
 
     def ensure_dirs(self) -> None:
-        """创建流程所需目录。"""
+        """确保技能抽取流程需要的目录全部存在。
+
+        该方法会在配置加载完成后执行，用于提前创建：
+        - prompt 目录
+        - report 目录
+        - cache 目录
+        - dictionary 目录
+        从而避免后续脚本在写文件时因为目录缺失而失败。
+        """
         for target in [
             self.output_dir,
             self.prompt_train_dir,
@@ -82,8 +122,20 @@ class SkillExtractionConfig:
             target.mkdir(parents=True, exist_ok=True)
 
 
-def load_skill_extraction_config(database_config_path: str | Path | None = None) -> SkillExtractionConfig:
-    """读取并构建技能词典流程配置。"""
+def load_skill_extraction_config(
+    database_config_path: str | Path | None = None,
+) -> SkillExtractionConfig:
+    """读取 YAML 配置并构建 `SkillExtractionConfig`。
+
+    参数:
+        database_config_path: 可选的配置文件路径；为空时读取默认配置。
+
+    返回:
+        SkillExtractionConfig: 可直接被技能抽取各脚本复用的配置对象。
+
+    异常:
+        ValueError: 当关键配置缺失，例如未配置 `jobs_table` 时抛出。
+    """
     import torch
 
     raw_config = load_database_config(database_config_path)
@@ -111,6 +163,18 @@ def load_skill_extraction_config(database_config_path: str | Path | None = None)
         db_path=db_path,
         duckdb_threads=max(1, int(db_settings.get("duckdb_threads", 8))),
         embedding_model_path=Path(r"D:\model\bge-base-zh-finetuned"),
+        llm_model_path=Path(
+            raw_config.get(
+                "LLM_model_path",
+                skill_settings.get("llm_model_path", r"D:\model\Qwen3-8B"),
+            )
+        ),
+        bert_model_path=Path(
+            raw_config.get(
+                "BERT_path",
+                skill_settings.get("bert_model_path", r"D:\model\chinese-roberta-wwm-ext"),
+            )
+        ),
         embedding_device="cuda" if torch.cuda.is_available() else "cpu",
         embedding_batch_size=128,
         match_top_k=5,

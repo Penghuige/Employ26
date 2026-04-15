@@ -17,8 +17,8 @@ from typing import Dict, List, Tuple
 import duckdb
 import pandas as pd
 
-from .bge_matcher import OccupationBGEMatcher
-from .config import SkillExtractionConfig
+from ..bge_matcher import OccupationBGEMatcher
+from ..config import SkillExtractionConfig
 
 
 logger = logging.getLogger(__name__)

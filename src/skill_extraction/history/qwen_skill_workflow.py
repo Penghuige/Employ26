@@ -21,7 +21,7 @@ from typing import Dict, Iterable, List, Sequence
 
 import pandas as pd
 
-from .config import load_skill_extraction_config
+from ..config import load_skill_extraction_config
 from .init_llm_output_layout import initialize_layout
 from .occupation_skill_pipeline import OccupationSkillPipeline
 

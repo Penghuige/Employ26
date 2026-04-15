@@ -40,7 +40,7 @@ import pandas as pd
 from src.preprocessing.parse_desc import parse_desc_df
 from src.skill_extraction.bge_matcher import OccupationBGEMatcher
 from src.skill_extraction.config import SkillExtractionConfig, load_skill_extraction_config
-from src.skill_extraction.data_source import OccupationSampleBuilder
+from src.skill_extraction.history.data_source import OccupationSampleBuilder
 
 
 logger = logging.getLogger(__name__)

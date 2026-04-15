@@ -39,6 +39,6 @@ llm_outputs/
 ## 导入建议
 
 ```bash
-python -m src.skill_extraction.import_llm_results --input output/skill_extraction/llm_outputs/train/round_00/json
-python -m src.skill_extraction.import_llm_results --input output/skill_extraction/llm_outputs/supplement/round_01/json
+python -m src.skill_extraction.history.import_llm_results --input output/skill_extraction/llm_outputs/train/round_00/json
+python -m src.skill_extraction.history.import_llm_results --input output/skill_extraction/llm_outputs/supplement/round_01/json
 ```

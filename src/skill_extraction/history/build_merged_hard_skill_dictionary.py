@@ -15,7 +15,7 @@
 这份脚本并不会重写你精修过的职业细类词典，而是生成一个新的“全局合并版”副本。
 
 用法示例：
-python -m src.skill_extraction.build_merged_hard_skill_dictionary ^
+python -m src.skill_extraction.history.build_merged_hard_skill_dictionary ^
   --input dicts/occupation_skill_dictionary_v2.4.json ^
   --output dicts/occupation_skill_dictionary_v2.5_merged.json
 """

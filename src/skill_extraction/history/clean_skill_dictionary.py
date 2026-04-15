@@ -13,10 +13,10 @@
 - 已明确标注为“排除项”的条目
 
 用法示例：
-python -m src.skill_extraction.clean_skill_dictionary
-python -m src.skill_extraction.clean_skill_dictionary --dry-run
-python -m src.skill_extraction.clean_skill_dictionary --in-place
-python -m src.skill_extraction.clean_skill_dictionary --input dicts/occupation_skill_dictionary.json --output dicts/occupation_skill_dictionary.cleaned.json
+python -m src.skill_extraction.history.clean_skill_dictionary
+python -m src.skill_extraction.history.clean_skill_dictionary --dry-run
+python -m src.skill_extraction.history.clean_skill_dictionary --in-place
+python -m src.skill_extraction.history.clean_skill_dictionary --input dicts/occupation_skill_dictionary.json --output dicts/occupation_skill_dictionary.cleaned.json
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import re
 import shutil
 from typing import Dict, Iterable, List, Sequence
 
-from .config import load_skill_extraction_config
+from ..config import load_skill_extraction_config
 
 
 # 这些 skill_type 一旦出现，基本可以确定不是“硬技能词典”应保留的内容。

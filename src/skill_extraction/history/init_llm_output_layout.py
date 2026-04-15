@@ -69,19 +69,19 @@ llm_outputs/
 训练阶段导入：
 
 ```bash
-python -m src.skill_extraction.import_llm_results --input output/skill_extraction/llm_outputs/train/round_00/json
+python -m src.skill_extraction.history.import_llm_results --input output/skill_extraction/llm_outputs/train/round_00/json
 ```
 
 补词阶段导入：
 
 ```bash
-python -m src.skill_extraction.import_llm_results --input output/skill_extraction/llm_outputs/supplement/round_01/json
+python -m src.skill_extraction.history.import_llm_results --input output/skill_extraction/llm_outputs/supplement/round_01/json
 ```
 
 如果你希望先预览导入结果：
 
 ```bash
-python -m src.skill_extraction.import_llm_results --input output/skill_extraction/llm_outputs/train/round_00/json --dry-run
+python -m src.skill_extraction.history.import_llm_results --input output/skill_extraction/llm_outputs/train/round_00/json --dry-run
 ```
 
 ## 约束

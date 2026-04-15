@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from collections import Counter
 import json
 import logging
 import random
@@ -51,7 +52,7 @@ import duckdb
 import pandas as pd
 
 # ── 复用已有模块的工具函数（遵循「请勿重复生成函数」原则）──────────────
-from .match_hard_skills_to_duckdb import (
+from .history.match_hard_skills_to_duckdb import (
     ALIAS_CANONICAL_MAP,
     GENERIC_SKILL_NAME_PATTERNS,
     HardSkillMatcher,
@@ -84,8 +85,8 @@ DEFAULT_FLAT_DICT_PATH = "dicts/flat_skill_dictionary.json"
 # 默认输出表（dev 表，与正式表区分）
 DEFAULT_OUTPUT_TABLE = "recruit.main.hard_skill_match_results_dev"
 
-# 默认 Qwen3-8B 模型路径
-DEFAULT_MODEL_PATH = "D:/model/Qwen3-8B"
+# 默认模型路径由 ``config/database.yaml`` 中的 ``LLM_model_path`` 提供。
+DEFAULT_MODEL_PATH: str | None = None
 
 # LLM 验证每条 prompt 包含的样本数
 VALIDATION_SAMPLES_PER_PROMPT: int = 5
@@ -294,6 +295,10 @@ class FlatHardSkillMatcher:
         self.term_index: List[TermEntry] = self._build_flat_term_index(
             self.skills
         )
+        self._normalized_trie: Dict[str, Dict] = {}
+        self._ascii_term_map: Dict[str, List[TermEntry]] = {}
+        self._ascii_pattern: re.Pattern[str] | None = None
+        self._build_recall_index(self.term_index)
         logger.info(
             "FlatHardSkillMatcher 初始化完成: %d 个技能, %d 个词项",
             len(self.skills),
@@ -398,6 +403,46 @@ class FlatHardSkillMatcher:
         )
         return entries
 
+    def _build_recall_index(self, entries: List[TermEntry]) -> None:
+        """构建高吞吐召回索引。
+
+        实现策略：
+            - ASCII 词项合并成一条带边界的大正则，降低逐词 ``re.search`` 开销。
+            - 中文/混合词项构建归一化 Trie，一次线性扫描文本即可找出候选。
+
+        这里仍然保留原有过滤规则和后处理逻辑，只替换召回层的数据结构。
+        """
+        ascii_term_map: Dict[str, List[TermEntry]] = {}
+        normalized_trie: Dict[str, Dict] = {}
+
+        for entry in entries:
+            if entry.is_ascii_like:
+                term_key = entry.term_text.lower()
+                ascii_term_map.setdefault(term_key, []).append(entry)
+                continue
+
+            node = normalized_trie
+            for char in entry.normalized_term:
+                node = node.setdefault(char, {})
+            node.setdefault("_entries", []).append(entry)
+
+        ascii_terms = sorted(ascii_term_map.keys(), key=len, reverse=True)
+        ascii_pattern: re.Pattern[str] | None = None
+        if ascii_terms:
+            ascii_pattern = re.compile(
+                rf"(?<![a-z0-9])(?:{'|'.join(re.escape(term) for term in ascii_terms)})(?![a-z0-9])"
+            )
+
+        self._ascii_term_map = ascii_term_map
+        self._ascii_pattern = ascii_pattern
+        self._normalized_trie = normalized_trie
+
+        logger.info(
+            "已构建召回索引: ASCII词项 %d, 归一化Trie词项 %d",
+            len(ascii_term_map),
+            sum(1 for item in entries if not item.is_ascii_like),
+        )
+
     @staticmethod
     def _is_low_value_alias(alias_text: str) -> bool:
         """判断 alias 是否过于宽泛，宽泛 alias 不应进入匹配索引。
@@ -454,6 +499,45 @@ class FlatHardSkillMatcher:
                 return alias_name
 
         return entry.skill_name
+
+    def _match_ascii_entries(self, raw_text: str) -> List[TermEntry]:
+        """使用合并正则匹配 ASCII-like 候选词项。"""
+        if not raw_text or self._ascii_pattern is None:
+            return []
+
+        matched_entries: List[TermEntry] = []
+        for match in self._ascii_pattern.finditer(raw_text):
+            term_key = match.group(0).lower()
+            matched_entries.extend(self._ascii_term_map.get(term_key, []))
+        return matched_entries
+
+    def _match_normalized_entries(self, normalized_text: str) -> List[TermEntry]:
+        """使用归一化 Trie 匹配中文/混合候选词项。"""
+        if not normalized_text or not self._normalized_trie:
+            return []
+
+        matched_entries: List[TermEntry] = []
+        text_length = len(normalized_text)
+
+        for start_index in range(text_length):
+            node = self._normalized_trie
+            cursor = start_index
+            longest_entries: List[TermEntry] | None = None
+
+            while cursor < text_length:
+                char = normalized_text[cursor]
+                if char not in node:
+                    break
+                node = node[char]
+                cursor += 1
+                terminal_entries = node.get("_entries")
+                if terminal_entries:
+                    longest_entries = terminal_entries
+
+            if longest_entries:
+                matched_entries.extend(longest_entries)
+
+        return matched_entries
 
     @staticmethod
     def _deduplicate_substring_matches(
@@ -537,26 +621,31 @@ class FlatHardSkillMatcher:
         if not normalized_text:
             return []
 
-        matched_skill_names: List[str] = []
+        candidates = self.match_candidates(text)
+        matched_skill_names = [item["skill_name"] for item in candidates]
+        return self._deduplicate_substring_matches(matched_skill_names)
+
+    def match_candidates(self, text: str) -> List[Dict]:
+        """返回候选技能及其命中词信息。
+
+        该方法服务于二阶段链路：
+            1. 先由词典召回候选技能；
+            2. 再由上下文判别器判断候选是否保留。
+        """
+        normalized_text = normalize_match_text(text)
+        raw_text = safe_lower_text(text)
+        if not normalized_text:
+            return []
+
+        recall_entries = (
+            self._match_normalized_entries(normalized_text)
+            + self._match_ascii_entries(raw_text)
+        )
+
+        candidates: List[Dict] = []
         seen_skills: set = set()
-
-        for entry in self.term_index:
+        for entry in recall_entries:
             if not entry.normalized_term:
-                continue
-
-            if entry.is_ascii_like:
-                # 英文边界匹配
-                pattern = (
-                    rf"(?<![a-z0-9])"
-                    rf"{re.escape(entry.term_text.lower())}"
-                    rf"(?![a-z0-9])"
-                )
-                is_match = bool(re.search(pattern, raw_text))
-            else:
-                # 中文归一化包含匹配
-                is_match = entry.normalized_term in normalized_text
-
-            if not is_match:
                 continue
 
             resolved_name = self._resolve_output_skill_name(entry)
@@ -567,10 +656,26 @@ class FlatHardSkillMatcher:
             if skill_key in seen_skills:
                 continue
             seen_skills.add(skill_key)
-            matched_skill_names.append(resolved_name)
+            candidates.append(
+                {
+                    "skill_name": resolved_name,
+                    "matched_term": entry.term_text,
+                    "term_role": entry.term_role,
+                }
+            )
 
-        # 去除中文子串重复匹配
-        return self._deduplicate_substring_matches(matched_skill_names)
+        if not candidates:
+            return []
+
+        deduped_names = self._deduplicate_substring_matches(
+            [item["skill_name"] for item in candidates]
+        )
+        keep_keys = {item.casefold() for item in deduped_names}
+        return [
+            item
+            for item in candidates
+            if item["skill_name"].casefold() in keep_keys
+        ]
 
     def find_skill_by_name(self, name: str) -> Dict | None:
         """根据技能名或别名查找词典中的技能条目。
@@ -658,6 +763,8 @@ def fetch_flat_source_rows(
 def match_flat_dataframe(
     source_df: pd.DataFrame,
     matcher: FlatHardSkillMatcher,
+    context_classifier=None,
+    context_batch_size: int = 64,
 ) -> pd.DataFrame:
     """对样本 DataFrame 做平面化词典硬技能匹配。
 
@@ -682,24 +789,32 @@ def match_flat_dataframe(
         pd.DataFrame: 包含原始字段 + ``skill_name`` JSON 列的结果表。
     """
     output_rows: List[Dict] = []
+    row_candidates: List[Dict] = []
 
-    for row in source_df.to_dict(orient="records"):
+    for row_index, row in enumerate(source_df.to_dict(orient="records")):
         match_text = _get_match_text(row)
-        matched_skills: List[str] = []
-        seen_skills: set = set()
-
-        # 对结构化字段按条目拆分匹配（不再做 is_skill_like_item 过滤）
         items = split_items(match_text)
-        if items:
-            for item in items:
-                for skill_name in matcher.match_text(item):
-                    skill_key = skill_name.casefold()
-                    if skill_key not in seen_skills:
-                        seen_skills.add(skill_key)
-                        matched_skills.append(skill_name)
-        else:
-            # 如果无法拆分（纯文本），直接整段匹配
-            for skill_name in matcher.match_text(match_text):
+        local_candidates: List[Dict] = []
+
+        recall_units = items if items else [match_text]
+        for item_text in recall_units:
+            for candidate in matcher.match_candidates(item_text):
+                candidate_row = {
+                    "row_index": row_index,
+                    "text": item_text,
+                    "job_title": _safe_text(row.get("岗位名称", "")),
+                    "skill_name": candidate["skill_name"],
+                    "matched_term": candidate["matched_term"],
+                    "term_role": candidate["term_role"],
+                }
+                local_candidates.append(candidate_row)
+                row_candidates.append(candidate_row)
+
+        matched_skills: List[str] = []
+        if context_classifier is None:
+            seen_skills: set = set()
+            for candidate in local_candidates:
+                skill_name = candidate["skill_name"]
                 skill_key = skill_name.casefold()
                 if skill_key not in seen_skills:
                     seen_skills.add(skill_key)
@@ -726,6 +841,55 @@ def match_flat_dataframe(
                     matched_skills, ensure_ascii=False
                 ),
             }
+        )
+
+    if context_classifier is not None and row_candidates:
+        from .context_classifier import SkillContextCandidate
+
+        classifier_inputs = [
+            SkillContextCandidate(
+                text=item["text"],
+                skill_name=item["skill_name"],
+                matched_term=item["matched_term"],
+                term_role=item["term_role"],
+                job_title=item["job_title"],
+                sample_id=str(item["row_index"]),
+            )
+            for item in row_candidates
+        ]
+        prediction_rows = context_classifier.predict(
+            classifier_inputs,
+            batch_size=max(1, int(context_batch_size)),
+        )
+
+        matched_by_row: Dict[int, List[str]] = {}
+        seen_per_row: Dict[int, set] = {}
+        label_counter: Counter[str] = Counter()
+        kept_count = 0
+        for candidate, prediction in zip(row_candidates, prediction_rows):
+            label_counter[str(prediction.get("label", ""))] += 1
+            if not bool(prediction.get("keep", False)):
+                continue
+            row_index = int(candidate["row_index"])
+            skill_name = candidate["skill_name"]
+            skill_key = skill_name.casefold()
+            seen_skills = seen_per_row.setdefault(row_index, set())
+            if skill_key in seen_skills:
+                continue
+            seen_skills.add(skill_key)
+            matched_by_row.setdefault(row_index, []).append(skill_name)
+            kept_count += 1
+
+        for row_index, output_row in enumerate(output_rows):
+            output_row["skill_name"] = json.dumps(
+                matched_by_row.get(row_index, []),
+                ensure_ascii=False,
+            )
+        logger.info(
+            "Context classifier kept %d/%d recalled candidates; labels=%s",
+            kept_count,
+            len(row_candidates),
+            dict(label_counter),
         )
 
     result_df = pd.DataFrame(output_rows)
@@ -879,7 +1043,7 @@ def _collect_validation_samples(
 
 def validate_match_results(
     result_df: pd.DataFrame,
-    model_path: str = DEFAULT_MODEL_PATH,
+    model_path: str | None = DEFAULT_MODEL_PATH,
     sample_size: int = DEFAULT_VALIDATION_SAMPLE_SIZE,
     seed: int = 42,
     gpu_memory_utilization: float = 0.80,
@@ -914,6 +1078,8 @@ def validate_match_results(
                 "alias_errors": [{"skill": str, "alias": str, "reason": str}],
             }
     """
+    resolved_model_path = str(model_path or load_skill_extraction_config().llm_model_path)
+
     # 延迟导入 vLLM 相关依赖（仅验证时需要）
     from .merge_similar_skills import init_vllm_engine, extract_json_from_response
     from vllm import SamplingParams
@@ -933,7 +1099,7 @@ def validate_match_results(
     # Step 3: vLLM 批量推理
     logger.info("正在初始化 vLLM 引擎进行验证...")
     llm = init_vllm_engine(
-        model_path=model_path,
+        model_path=resolved_model_path,
         gpu_memory_utilization=gpu_memory_utilization,
         max_model_len=max_model_len,
         max_num_seqs=max_num_seqs,
@@ -1213,6 +1379,9 @@ def run_match(
     source_table: str | None = None,
     output_table: str = DEFAULT_OUTPUT_TABLE,
     limit: int | None = None,
+    context_classifier_model: str | None = None,
+    context_threshold: float = 0.80,
+    context_batch_size: int = 64,
 ) -> pd.DataFrame:
     """执行平面化词典匹配流程。
 
@@ -1242,6 +1411,20 @@ def run_match(
 
     flat_dict = load_flat_dictionary(dict_path)
     matcher = FlatHardSkillMatcher(flat_dict)
+    context_classifier = None
+    resolved_context_model = context_classifier_model
+    if resolved_context_model:
+        from .context_classifier import SkillContextClassifier
+
+        context_classifier = SkillContextClassifier(
+            model_path=resolved_context_model,
+            threshold=context_threshold,
+        )
+        logger.info(
+            "已启用上下文判别器: model=%s, threshold=%.2f",
+            resolved_context_model,
+            context_threshold,
+        )
 
     with duckdb.connect(str(config.db_path)) as conn:
         conn.execute(f"PRAGMA threads={config.duckdb_threads}")
@@ -1251,7 +1434,10 @@ def run_match(
         logger.info("已加载 %d 条源数据", len(source_df))
 
         result_df = match_flat_dataframe(
-            source_df=source_df, matcher=matcher,
+            source_df=source_df,
+            matcher=matcher,
+            context_classifier=context_classifier,
+            context_batch_size=context_batch_size,
         )
         write_flat_result_table(
             conn=conn, result_df=result_df, output_table=output_table,
@@ -1285,7 +1471,7 @@ def run_match(
 def run_validate(
     dict_path: str | Path = DEFAULT_FLAT_DICT_PATH,
     output_table: str = DEFAULT_OUTPUT_TABLE,
-    model_path: str = DEFAULT_MODEL_PATH,
+    model_path: str | None = DEFAULT_MODEL_PATH,
     sample_size: int = DEFAULT_VALIDATION_SAMPLE_SIZE,
     seed: int = 42,
     gpu_memory_utilization: float = 0.80,
@@ -1317,10 +1503,12 @@ def run_validate(
     """
     config = load_skill_extraction_config()
 
+    resolved_model_path = str(model_path or config.llm_model_path)
+
     logger.info("=" * 60)
     logger.info("  LLM 验证匹配结果")
     logger.info("  词典: %s", dict_path)
-    logger.info("  模型: %s", model_path)
+    logger.info("  模型: %s", resolved_model_path)
     logger.info("  抽样数量: %d", sample_size)
     logger.info("=" * 60)
 
@@ -1335,7 +1523,7 @@ def run_validate(
     # LLM 验证
     validation_summary = validate_match_results(
         result_df=result_df,
-        model_path=model_path,
+        model_path=resolved_model_path,
         sample_size=sample_size,
         seed=seed,
         gpu_memory_utilization=gpu_memory_utilization,
@@ -1384,7 +1572,7 @@ def run_full(
     dict_path: str | Path = DEFAULT_FLAT_DICT_PATH,
     source_table: str | None = None,
     output_table: str = DEFAULT_OUTPUT_TABLE,
-    model_path: str = DEFAULT_MODEL_PATH,
+    model_path: str | None = DEFAULT_MODEL_PATH,
     limit: int | None = None,
     sample_size: int = DEFAULT_VALIDATION_SAMPLE_SIZE,
     seed: int = 42,
@@ -1392,6 +1580,9 @@ def run_full(
     max_model_len: int = 8192,
     max_num_seqs: int = 48,
     auto_correct: bool = True,
+    context_classifier_model: str | None = None,
+    context_threshold: float = 0.80,
+    context_batch_size: int = 64,
 ) -> None:
     """执行完整流程：匹配 → LLM 验证 → 词典修正。
 
@@ -1420,6 +1611,9 @@ def run_full(
         source_table=source_table,
         output_table=output_table,
         limit=limit,
+        context_classifier_model=context_classifier_model,
+        context_threshold=context_threshold,
+        context_batch_size=context_batch_size,
     )
 
     # Step 2: LLM 验证 + 词典修正
@@ -1494,6 +1688,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None,
         help="调试用，限制处理行数",
     )
+    match_cmd.add_argument(
+        "--context-classifier-model", default=None,
+        help="上下文判别器模型目录；提供后启用二阶段过滤",
+    )
+    match_cmd.add_argument(
+        "--context-threshold", type=float, default=0.80,
+        help="上下文判别器保留阈值 (默认: 0.80)",
+    )
+    match_cmd.add_argument(
+        "--context-batch-size", type=int, default=64,
+        help="上下文判别器推理 batch size (默认: 64)",
+    )
 
     # ── validate ─────────────────────────────────────────────────────
     validate_cmd = subparsers.add_parser(
@@ -1509,7 +1715,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate_cmd.add_argument(
         "--model", default=DEFAULT_MODEL_PATH,
-        help=f"Qwen3-8B 模型路径 (默认: {DEFAULT_MODEL_PATH})",
+        help="Qwen3-8B 模型路径（默认从 config/database.yaml 的 LLM_model_path 读取）",
     )
     validate_cmd.add_argument(
         "--sample-size", type=int, default=DEFAULT_VALIDATION_SAMPLE_SIZE,
@@ -1553,7 +1759,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_cmd.add_argument(
         "--model", default=DEFAULT_MODEL_PATH,
-        help=f"Qwen3-8B 模型路径 (默认: {DEFAULT_MODEL_PATH})",
+        help="Qwen3-8B 模型路径（默认从 config/database.yaml 的 LLM_model_path 读取）",
     )
     run_cmd.add_argument(
         "--limit", type=int, default=None,
@@ -1582,6 +1788,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-auto-correct", action="store_true",
         help="禁用自动修正词典（仅输出报告）",
     )
+    run_cmd.add_argument(
+        "--context-classifier-model", default=None,
+        help="上下文判别器模型目录；提供后启用二阶段过滤",
+    )
+    run_cmd.add_argument(
+        "--context-threshold", type=float, default=0.80,
+        help="上下文判别器保留阈值 (默认: 0.80)",
+    )
+    run_cmd.add_argument(
+        "--context-batch-size", type=int, default=64,
+        help="上下文判别器推理 batch size (默认: 64)",
+    )
 
     return parser
 
@@ -1603,6 +1821,9 @@ def main() -> None:
             source_table=args.source_table,
             output_table=args.output_table,
             limit=args.limit,
+            context_classifier_model=getattr(args, "context_classifier_model", None),
+            context_threshold=getattr(args, "context_threshold", 0.80),
+            context_batch_size=getattr(args, "context_batch_size", 64),
         )
         return
 
@@ -1633,6 +1854,9 @@ def main() -> None:
             max_model_len=args.max_model_len,
             max_num_seqs=args.max_num_seqs,
             auto_correct=not args.no_auto_correct,
+            context_classifier_model=getattr(args, "context_classifier_model", None),
+            context_threshold=getattr(args, "context_threshold", 0.80),
+            context_batch_size=getattr(args, "context_batch_size", 64),
         )
         return
 

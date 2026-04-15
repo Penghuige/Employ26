@@ -26,7 +26,7 @@
 - `recruit.main.hard_skill_match_results`
 
 用法示例：
-python -m src.skill_extraction.match_hard_skills_to_duckdb ^
+python -m src.skill_extraction.history.match_hard_skills_to_duckdb ^
   --dictionary dicts/occupation_skill_dictionary_v2.4.json
 """
 
@@ -42,7 +42,7 @@ from typing import Dict, Iterable, List, Sequence
 import duckdb
 import pandas as pd
 
-from .config import load_skill_extraction_config
+from ..config import load_skill_extraction_config
 
 
 GLOBAL_POOL_PATH = "通用技能池 > 跨职业通用硬技能"

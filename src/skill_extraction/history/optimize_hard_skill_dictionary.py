@@ -15,7 +15,7 @@
 - 你希望把“结构是否健康”这件事固化成脚本，而不是每次手工检查。
 
 用法示例：
-python -m src.skill_extraction.optimize_hard_skill_dictionary ^
+python -m src.skill_extraction.history.optimize_hard_skill_dictionary ^
   --input dicts/occupation_skill_dictionary_v2.3.json ^
   --output dicts/occupation_skill_dictionary_v2.4.json
 """

@@ -1,19 +1,16 @@
-"""
-职业细类技能词典构建模块。
-
-当前目录只保留与以下主流程直接相关的脚本：
-职业细类采样 -> 任职要求切分 -> LLM 词典生成 -> 覆盖率验证 -> 迭代补词。
-"""
+"""技能抽取模块。"""
 
 from .bge_matcher import OccupationBGEMatcher
 from .config import SkillExtractionConfig, load_skill_extraction_config
-from .coverage import RequirementCoverageEvaluator
-from .data_source import OccupationSampleBuilder
-from .dictionary_store import OccupationSkillDictionaryStore
-from .occupation_skill_pipeline import OccupationSkillPipeline
+from .history.coverage import RequirementCoverageEvaluator
+from .history.data_source import OccupationSampleBuilder
+from .history.dictionary_store import OccupationSkillDictionaryStore
+from .history.occupation_skill_pipeline import OccupationSkillPipeline
+from .occupation_skill_pipeline import FlatSkillPipeline
 
 __all__ = [
     "OccupationBGEMatcher",
+    "FlatSkillPipeline",
     "OccupationSampleBuilder",
     "OccupationSkillDictionaryStore",
     "OccupationSkillPipeline",
