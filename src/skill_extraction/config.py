@@ -13,7 +13,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+from src.utils.llm_router import (
+    DEFAULT_API_MODE,
+    DEFAULT_BASE_URL,
+    DEFAULT_CHEAP_MODEL,
+    DEFAULT_STRONG_MODEL,
+)
 
 from src.job_title_parsing.match_utils import load_database_config
 
@@ -80,7 +87,15 @@ class SkillExtractionConfig:
     embedding_model_path: Path
     llm_model_path: Path
     bert_model_path: Path
+    preferred_local_llm_path: Path
+    fallback_local_llm_paths: List[Path]
+    model_download_dir: Path
     embedding_device: str
+    llm_base_url: str
+    llm_api_mode: str
+    llm_cheap_model: str
+    llm_strong_model: str
+    llm_env_file: Path
     embedding_batch_size: int
     match_top_k: int
     catalog_table: str
@@ -122,6 +137,19 @@ class SkillExtractionConfig:
             target.mkdir(parents=True, exist_ok=True)
 
 
+def _resolve_local_model_path(
+    primary: object,
+    fallbacks: List[Path],
+) -> Path:
+    primary_path = Path(str(primary))
+    if primary_path.exists():
+        return primary_path
+    for candidate in fallbacks:
+        if candidate.exists():
+            return candidate
+    return primary_path
+
+
 def load_skill_extraction_config(
     database_config_path: str | Path | None = None,
 ) -> SkillExtractionConfig:
@@ -136,9 +164,13 @@ def load_skill_extraction_config(
     异常:
         ValueError: 当关键配置缺失，例如未配置 `jobs_table` 时抛出。
     """
-    import torch
-
     raw_config = load_database_config(database_config_path)
+    try:
+        import torch  # type: ignore
+
+        embedding_device = "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        embedding_device = "cpu"
     db_settings = raw_config.get("database", {})
     parsing_settings = raw_config.get("job_title_parsing", {})
     skill_settings = raw_config.get("skill_extraction", {})
@@ -157,25 +189,39 @@ def load_skill_extraction_config(
     report_dir = output_dir / "reports"
     cache_dir = output_dir / "cache"
     dict_dir = PROJECT_ROOT / "dicts"
+    model_download_dir = PROJECT_ROOT / "models" / "hf"
+    preferred_local_llm_path = Path(
+        skill_settings.get("preferred_local_llm_path", raw_config.get("LLM_model_path", "models/hf/Qwen2.5-14B-Instruct"))
+    )
+    fallback_local_llm_paths = [
+        PROJECT_ROOT / "models" / "hf" / "Qwen2.5-14B-Instruct",
+        PROJECT_ROOT / "models" / "hf" / "DeepSeek-R1-Distill-Qwen-14B",
+        PROJECT_ROOT / "models" / "hf" / "Qwen2.5-7B-Instruct",
+        Path(str(raw_config.get("LLM_model_path", skill_settings.get("llm_model_path", r"D:\\model\\Qwen3-8B")))),
+    ]
+    resolved_local_llm_path = _resolve_local_model_path(preferred_local_llm_path, fallback_local_llm_paths)
 
     config = SkillExtractionConfig(
         project_root=PROJECT_ROOT,
         db_path=db_path,
         duckdb_threads=max(1, int(db_settings.get("duckdb_threads", 8))),
         embedding_model_path=Path(r"D:\model\bge-base-zh-finetuned"),
-        llm_model_path=Path(
-            raw_config.get(
-                "LLM_model_path",
-                skill_settings.get("llm_model_path", r"D:\model\Qwen3-8B"),
-            )
-        ),
+        llm_model_path=resolved_local_llm_path,
         bert_model_path=Path(
             raw_config.get(
                 "BERT_path",
                 skill_settings.get("bert_model_path", r"D:\model\chinese-roberta-wwm-ext"),
             )
         ),
-        embedding_device="cuda" if torch.cuda.is_available() else "cpu",
+        preferred_local_llm_path=preferred_local_llm_path,
+        fallback_local_llm_paths=fallback_local_llm_paths,
+        model_download_dir=model_download_dir,
+        embedding_device=embedding_device,
+        llm_base_url=skill_settings.get("llm_base_url", DEFAULT_BASE_URL),
+        llm_api_mode=skill_settings.get("llm_api_mode", DEFAULT_API_MODE),
+        llm_cheap_model=skill_settings.get("llm_cheap_model", DEFAULT_CHEAP_MODEL),
+        llm_strong_model=skill_settings.get("llm_strong_model", DEFAULT_STRONG_MODEL),
+        llm_env_file=PROJECT_ROOT / skill_settings.get("llm_env_file", ".env.local"),
         embedding_batch_size=128,
         match_top_k=5,
         catalog_table=qualify_table_name(

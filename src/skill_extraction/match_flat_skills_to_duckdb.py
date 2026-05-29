@@ -64,6 +64,13 @@ from .history.match_hard_skills_to_duckdb import (
     split_items,
 )
 from .config import load_skill_extraction_config
+from .iteration_rules import (
+    get_canonical_output_overrides,
+    get_contextual_term_rules,
+    get_exact_generic_skill_blocklist,
+    get_short_chinese_allowlist,
+)
+from .llm_labeling_utils import run_openai_prompt_pairs
 
 # ============================================================================
 #  日志配置
@@ -96,6 +103,9 @@ VALIDATION_MAX_TEXT_CHARS: int = 500
 
 # LLM 验证默认抽样数量
 DEFAULT_VALIDATION_SAMPLE_SIZE: int = 50
+STRONG_REVALIDATION_PRECISION_THRESHOLD: float = 0.95
+STRONG_REVALIDATION_PARSE_SUCCESS_THRESHOLD: float = 0.90
+STRONG_REVALIDATION_MIN_SAMPLES: int = 20
 
 # 词项最小长度阈值：过短的词项噪音极大，需跳过。
 # 中文词项归一化后至少 3 字符（如"焊接"=2 太短，"焊接工艺"=4 可以）；
@@ -139,6 +149,41 @@ LOW_VALUE_ALIAS_PATTERNS: List[re.Pattern[str]] = [
     re.compile(r"^(工具|软件|系统|平台|知识|理论|能力|测试)$"),
     re.compile(r".*(资格证|资格证书|执业证|执业资格证书)$"),
 ]
+
+EXACT_GENERIC_SKILL_BLOCKLIST: set[str] = get_exact_generic_skill_blocklist()
+CANONICAL_OUTPUT_OVERRIDES: Dict[str, str] = get_canonical_output_overrides()
+SHORT_CHINESE_ALLOWLIST: set[str] = get_short_chinese_allowlist()
+
+
+def _compile_contextual_term_rules() -> Dict[str, List[Dict]]:
+    compiled: Dict[str, List[Dict]] = {}
+    for item in get_contextual_term_rules():
+        skill_name = _safe_text(item.get("skill_name", ""))
+        if not skill_name:
+            continue
+        compiled.setdefault(skill_name.casefold(), []).append(
+            {
+                "match_terms": {
+                    _safe_text(term).casefold()
+                    for term in item.get("match_terms", [])
+                    if _safe_text(term)
+                },
+                "require_any": [
+                    re.compile(str(pattern), re.IGNORECASE)
+                    for pattern in item.get("require_any", [])
+                    if str(pattern).strip()
+                ],
+                "reject_if_any": [
+                    re.compile(str(pattern), re.IGNORECASE)
+                    for pattern in item.get("reject_if_any", [])
+                    if str(pattern).strip()
+                ],
+            }
+        )
+    return compiled
+
+
+CONTEXTUAL_TERM_RULES: Dict[str, List[Dict]] = _compile_contextual_term_rules()
 
 # 结果表输出列
 OUTPUT_COLUMNS = [
@@ -188,6 +233,16 @@ VALIDATION_USER_TEMPLATE = """\
 请逐条审核，输出 JSON。
 """
 
+STRONG_VALIDATION_SYSTEM_PROMPT = """\
+你是一名高精度硬技能匹配审核专家。你将复核本地LLM给出的高准确率验证结果，避免本地模型自证正确。
+要求：
+1. 逐条判断匹配结果是否真的正确。
+2. 重点检查泛词、alias误吸附、上下位误匹配、证书容器词误判。
+3. 如果本地LLM判断过于乐观，应明确指出 wrong_skills、alias_errors、missing_skills。
+4. 只输出 JSON，不要解释。
+输出格式与普通验证阶段相同。
+"""
+
 VALIDATION_SAMPLE_TEMPLATE = """\
 --- 样本 {index} ---
 岗位文本：
@@ -200,6 +255,79 @@ VALIDATION_SAMPLE_TEMPLATE = """\
 # ============================================================================
 #  1. 词典加载
 # ============================================================================
+
+def should_trigger_strong_revalidation(summary: Dict) -> bool:
+    """当本地验证结果过于乐观时，触发更强 API 模型复核。"""
+    total_samples = int(summary.get("total_samples", 0) or 0)
+    estimated_precision = float(summary.get("estimated_precision", 0.0) or 0.0)
+    parse_success_rate = float(summary.get("parse_success_rate", 0.0) or 0.0)
+    if total_samples < STRONG_REVALIDATION_MIN_SAMPLES:
+        return False
+    if estimated_precision >= STRONG_REVALIDATION_PRECISION_THRESHOLD and parse_success_rate >= STRONG_REVALIDATION_PARSE_SUCCESS_THRESHOLD:
+        return True
+    return False
+
+
+def _build_strong_validation_prompts(samples: List[Dict]) -> List[Tuple[str, str]]:
+    prompt_pairs: List[Tuple[str, str]] = []
+    for start in range(0, len(samples), VALIDATION_SAMPLES_PER_PROMPT):
+        batch = samples[start : start + VALIDATION_SAMPLES_PER_PROMPT]
+        sample_blocks: List[str] = []
+        for offset, sample in enumerate(batch):
+            matched_skills = ", ".join(sample.get("matched_skills", [])) or "无"
+            sample_blocks.append(
+                VALIDATION_SAMPLE_TEMPLATE.format(
+                    index=start + offset,
+                    text=sample.get("text", "")[:VALIDATION_MAX_TEXT_CHARS],
+                    matched_skills=matched_skills,
+                )
+            )
+        prompt_pairs.append(
+            (
+                STRONG_VALIDATION_SYSTEM_PROMPT,
+                VALIDATION_USER_TEMPLATE.format(count=len(batch), samples_block="\n\n".join(sample_blocks)),
+            )
+        )
+    return prompt_pairs
+
+
+def _summarize_validation_findings(raw_texts: List[str], total_samples: int, prompt_count: int) -> Dict:
+    all_wrong: List[Dict] = []
+    all_missing: List[Dict] = []
+    all_alias_errors: List[Dict] = []
+    parse_success = 0
+    from .merge_similar_skills import extract_json_from_response
+
+    for raw_text in raw_texts:
+        parsed = extract_json_from_response(raw_text)
+        if parsed is None or not isinstance(parsed, dict):
+            continue
+        parse_success += 1
+        for sample_result in parsed.get("samples", []):
+            for wrong in sample_result.get("wrong_skills", []):
+                if isinstance(wrong, dict) and wrong.get("skill"):
+                    all_wrong.append(wrong)
+            for missing in sample_result.get("missing_skills", []):
+                if isinstance(missing, dict) and missing.get("name"):
+                    all_missing.append(missing)
+            for alias_err in sample_result.get("alias_errors", []):
+                if isinstance(alias_err, dict) and alias_err.get("alias"):
+                    all_alias_errors.append(alias_err)
+
+    wrong_summary = _deduplicate_findings(all_wrong, key_field="skill")
+    missing_summary = _deduplicate_findings(all_missing, key_field="name")
+    alias_error_summary = _deduplicate_alias_errors(all_alias_errors)
+    return {
+        "total_samples": total_samples,
+        "prompt_count": prompt_count,
+        "parse_success": parse_success,
+        "parse_success_rate": parse_success / max(prompt_count, 1),
+        "wrong_skills": wrong_summary,
+        "missing_skills": missing_summary,
+        "alias_errors": alias_error_summary,
+        "estimated_precision": 1.0 - (len(wrong_summary) + len(alias_error_summary)) / max(total_samples, 1),
+    }
+
 
 def load_flat_dictionary(path: str | Path) -> Dict:
     """加载平面化技能词典 JSON。
@@ -366,7 +494,7 @@ class FlatHardSkillMatcher:
                         skipped_short += 1
                         continue
                 else:
-                    if len(normalized) < MIN_CHINESE_TERM_LEN:
+                    if len(normalized) < MIN_CHINESE_TERM_LEN and term_text not in SHORT_CHINESE_ALLOWLIST:
                         skipped_short += 1
                         continue
 
@@ -471,9 +599,18 @@ class FlatHardSkillMatcher:
         text = _safe_text(skill_name)
         if not text:
             return True
+        if text in EXACT_GENERIC_SKILL_BLOCKLIST:
+            return True
         if text in SKILL_BLACKLIST:
             return True
         return any(pattern.search(text) for pattern in LOW_VALUE_SKILL_PATTERNS)
+
+    @staticmethod
+    def _canonicalize_output_name(skill_name: str) -> str:
+        text = _safe_text(skill_name)
+        if not text:
+            return ""
+        return CANONICAL_OUTPUT_OVERRIDES.get(text.casefold(), text)
 
     def _resolve_output_skill_name(self, entry: TermEntry) -> str:
         """决定最终写入结果表的技能名。
@@ -491,14 +628,43 @@ class FlatHardSkillMatcher:
             str: 最终技能名。
         """
         if entry.term_role == "name":
-            return entry.skill_name
+            return self._canonicalize_output_name(entry.skill_name)
 
         if HardSkillMatcher._is_generic_skill_name(entry.skill_name):
             alias_name = HardSkillMatcher._canonicalize_alias(entry.term_text)
             if alias_name:
-                return alias_name
+                return self._canonicalize_output_name(alias_name)
 
-        return entry.skill_name
+        return self._canonicalize_output_name(entry.skill_name)
+
+    def _passes_contextual_term_rules(
+        self,
+        raw_text: str,
+        entry: TermEntry,
+        resolved_name: str,
+    ) -> bool:
+        rules = CONTEXTUAL_TERM_RULES.get(resolved_name.casefold(), [])
+        if not rules:
+            return True
+
+        term_key = _safe_text(entry.term_text).casefold()
+        applicable_rules = [
+            rule
+            for rule in rules
+            if not rule["match_terms"] or term_key in rule["match_terms"]
+        ]
+        if not applicable_rules:
+            return True
+
+        for rule in applicable_rules:
+            if any(pattern.search(raw_text) for pattern in rule["reject_if_any"]):
+                continue
+            if rule["require_any"] and not any(
+                pattern.search(raw_text) for pattern in rule["require_any"]
+            ):
+                continue
+            return True
+        return False
 
     def _match_ascii_entries(self, raw_text: str) -> List[TermEntry]:
         """使用合并正则匹配 ASCII-like 候选词项。"""
@@ -650,6 +816,8 @@ class FlatHardSkillMatcher:
 
             resolved_name = self._resolve_output_skill_name(entry)
             if self._is_low_value_skill_name(resolved_name):
+                continue
+            if not self._passes_contextual_term_rules(text, entry, resolved_name):
                 continue
 
             skill_key = resolved_name.casefold()
@@ -1134,53 +1302,37 @@ def validate_match_results(
     raw_texts = [output.outputs[0].text for output in outputs]
     logger.info("vLLM 验证推理完成")
 
-    # Step 4: 解析结果
-    all_wrong: List[Dict] = []
-    all_missing: List[Dict] = []
-    all_alias_errors: List[Dict] = []
-    parse_success = 0
-
-    for raw_text in raw_texts:
-        parsed = extract_json_from_response(raw_text)
-        if parsed is None or not isinstance(parsed, dict):
-            logger.warning("验证结果 JSON 解析失败")
-            continue
-        parse_success += 1
-
-        for sample_result in parsed.get("samples", []):
-            for wrong in sample_result.get("wrong_skills", []):
-                if isinstance(wrong, dict) and wrong.get("skill"):
-                    all_wrong.append(wrong)
-
-            for missing in sample_result.get("missing_skills", []):
-                if isinstance(missing, dict) and missing.get("name"):
-                    all_missing.append(missing)
-
-            for alias_err in sample_result.get("alias_errors", []):
-                if isinstance(alias_err, dict) and alias_err.get("alias"):
-                    all_alias_errors.append(alias_err)
-
-    # 去重汇总
-    wrong_summary = _deduplicate_findings(all_wrong, key_field="skill")
-    missing_summary = _deduplicate_findings(all_missing, key_field="name")
-    alias_error_summary = _deduplicate_alias_errors(all_alias_errors)
-
-    summary = {
-        "total_samples": len(samples),
-        "prompt_count": len(prompt_pairs),
-        "parse_success": parse_success,
-        "wrong_skills": wrong_summary,
-        "missing_skills": missing_summary,
-        "alias_errors": alias_error_summary,
-    }
+    summary = _summarize_validation_findings(raw_texts, len(samples), len(prompt_pairs))
 
     logger.info(
         "验证汇总: %d 条样本, %d 个错误匹配, %d 个遗漏技能, %d 个 alias 错误",
         len(samples),
-        len(wrong_summary),
-        len(missing_summary),
-        len(alias_error_summary),
+        len(summary["wrong_skills"]),
+        len(summary["missing_skills"]),
+        len(summary["alias_errors"]),
     )
+    return summary
+
+
+def run_strong_revalidation(
+    result_df: pd.DataFrame,
+    sample_size: int = DEFAULT_VALIDATION_SAMPLE_SIZE,
+    model: str = "openai/gpt-5.4",
+    seed: int = 42,
+) -> Dict:
+    samples = _collect_validation_samples(result_df, sample_size=sample_size, seed=seed)
+    if not samples:
+        return {"total_samples": 0, "wrong_skills": [], "missing_skills": [], "alias_errors": []}
+    prompt_pairs = _build_strong_validation_prompts(samples)
+    outputs = run_openai_prompt_pairs(
+        prompt_pairs=prompt_pairs,
+        model=model,
+        max_output_tokens=2048,
+        reasoning_effort="medium",
+    )
+    summary = _summarize_validation_findings(outputs, len(samples), len(prompt_pairs))
+    summary["review_model"] = model
+    summary["review_stage"] = "strong_api_revalidation"
     return summary
 
 
@@ -1483,9 +1635,10 @@ def run_validate(
 
     步骤：
         1. 从已有匹配结果中抽样。
-        2. 使用 vLLM 批量推理验证匹配质量。
-        3. 根据验证结果修正词典（如果 ``auto_correct=True``）。
-        4. 保存修正后的词典和验证报告。
+        3. 使用 vLLM 批量推理验证匹配质量。
+        4. 当本地验证结果过于乐观时，调用更强 API 模型复核，防止“自证准确”。
+        5. 根据验证结果修正词典（如果 ``auto_correct=True``）。
+        6. 保存修正后的词典和验证报告。
 
     参数:
         dict_path: 词典路径。
@@ -1539,6 +1692,21 @@ def run_validate(
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(validation_summary, f, ensure_ascii=False, indent=2)
     logger.info("验证报告已保存: %s", report_path)
+
+    if should_trigger_strong_revalidation(validation_summary):
+        logger.info("本地验证准确率过高，触发更强 API 复核以防止自证准确")
+        strong_summary = run_strong_revalidation(
+            result_df=result_df,
+            sample_size=sample_size,
+            model=config.llm_strong_model,
+            seed=seed,
+        )
+        strong_report_path = report_dir / f"validation_report_strong_{timestamp}.json"
+        with open(strong_report_path, "w", encoding="utf-8") as f:
+            json.dump(strong_summary, f, ensure_ascii=False, indent=2)
+        validation_summary["strong_revalidation"] = strong_summary
+        validation_summary["strong_revalidation_report_path"] = str(strong_report_path)
+        logger.info("强复核报告已保存: %s", strong_report_path)
 
     # 自动修正词典
     if auto_correct and (

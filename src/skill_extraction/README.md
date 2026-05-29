@@ -9,6 +9,12 @@
 
 ## 目录说明
 
+注意：`src/skill_extraction` 的“技能词典”与 `src/job_title_parsing/occupation_dictionary_pipeline.py` 的“职业词典”是两条不同链路。
+- 技能词典：提取 JD 中的技能项
+- 职业词典：岗位名称标准化 / canonical occupation / alias 映射
+
+当前主任务优先是“技能词典提取”。
+
 - [pipeline_v1.py](/d:/PythonProjects/Employ26/src/skill_extraction/pipeline_v1.py:1)
   `v1` 入口
 - [pipeline_v2.py](/d:/PythonProjects/Employ26/src/skill_extraction/pipeline_v2.py:1)
@@ -46,12 +52,14 @@ python -m src.skill_extraction.pipeline_v1 status
 python -m src.skill_extraction.pipeline_v2
 ```
 
-### 2. 自动生成回归集
+### 2. 自动生成回归集（本地 LLM 主抽取 + GPT 高精度终审）
 
 ```bash
 python -m src.skill_extraction.llm_label_regression_dataset ^
   --sample-size 400 ^
-  --num-votes 3
+  --num-votes 3 ^
+  --use-openai-final-review ^
+  --openai-review-model openai/gpt-5.4-mini
 ```
 
 ### 3. 自动生成上下文训练集
@@ -125,17 +133,58 @@ python -m src.skill_extraction.match_flat_skills_to_duckdb match ^
 
 统一读取：
 
-- [config/database.yaml](/d:/PythonProjects/Employ26/config/database.yaml:1)
+- `config/database.yaml`
+- 本地 `.env.local`（LLM API 配置，不提交 git）
 
-当前关键字段：
+当前 LLM 使用策略：
 
-```yaml
-LLM_model_path: D:/model/Qwen3-8B
-BERT_path: D:\model\chinese-roberta-wwm-ext
+1. 技能提取主流程：优先使用本地 GPU + vLLM + 本地模型目录，目的是降低 token/API 成本
+2. 高精度终审/难例判别：使用远端 GPT 模型（默认 `openai/gpt-5.4-mini`，必要时升级）
+3. 默认本地模型选择顺序：
+   - `models/hf/Qwen2.5-14B-Instruct`
+   - `models/hf/DeepSeek-R1-Distill-Qwen-14B`
+   - `models/hf/Qwen2.5-7B-Instruct`
+   - `config/database.yaml` 中的 `LLM_model_path`
+
+可查看当前自动选中的本地模型：
+
+```bash
+python3 -m src.skill_extraction.pipeline_v2 --print-model-choice
 ```
 
-## 说明
+## 职业词典试运行
+
+小批次 pilot：
+
+```bash
+python3 -m src.job_title_parsing.occupation_dictionary_pipeline --pilot-size 10
+```
+
+仅生成评估与 review，不写回主词典：
+
+```bash
+python3 -m src.job_title_parsing.occupation_dictionary_pipeline --pilot-size 10 --dry-run
+```
+
+输出位置：
+- review: `output/occupation_dictionary/review/`
+- report: `output/occupation_dictionary/reports/`
+- state: `output/occupation_dictionary/iteration_state.json`
+- cache: `output/occupation_dictionary/cache/classification_cache.json`
 
 - `v1` 的相关功能模块已经整体下沉到 `history/`
 - `v2` 的词典构造主逻辑保持不变，这次新增的是自动标注、回归评测和多分类上下文过滤链路
 - 更完整的设计说明见 [DESIGN_v2.md](/d:/PythonProjects/Employ26/src/skill_extraction/DESIGN_v2.md:1)
+
+## Standardized Dictionary Workflow
+
+- SOP: [SKILL_DICTIONARY_WORKFLOW_SOP.md](/D:/PythonProjects/Employ26/src/skill_extraction/SKILL_DICTIONARY_WORKFLOW_SOP.md)
+- Controller: [skill_dictionary_workflow.py](/D:/PythonProjects/Employ26/src/skill_extraction/skill_dictionary_workflow.py)
+
+Recommended commands:
+
+```bash
+python -m src.skill_extraction.skill_dictionary_workflow baseline
+python -m src.skill_extraction.skill_dictionary_workflow run
+python -m src.skill_extraction.skill_dictionary_workflow status
+```

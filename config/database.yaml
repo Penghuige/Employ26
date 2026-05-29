@@ -14,4 +14,7 @@ skill_extraction:
 raw_database: recruit.raw_data.lieping_raw_data, recruit.raw_data.qcwu_raw_data, recruit.raw_data.zhilian_raw_data
 
 LLM_model_path: D:/model/Qwen3-8B
-BERT_path: D:\model\chinese-roberta-wwm-ext
+BERT_path: D:/model/chinese-roberta-wwm-ext
+
+API_URL: https://api.ofox.ai/v1/chat/completions
+APi_KEY: sk-of-SaWCFPkLtxICvozTZLrMHpjHwMrxCwfNeKctuwZJilobzlyTZhEPfyhXzbXMaKwC

@@ -1,20 +1,28 @@
 """技能抽取模块。"""
 
-from .bge_matcher import OccupationBGEMatcher
-from .config import SkillExtractionConfig, load_skill_extraction_config
-from .history.coverage import RequirementCoverageEvaluator
-from .history.data_source import OccupationSampleBuilder
-from .history.dictionary_store import OccupationSkillDictionaryStore
-from .history.occupation_skill_pipeline import OccupationSkillPipeline
-from .occupation_skill_pipeline import FlatSkillPipeline
-
 __all__ = [
     "OccupationBGEMatcher",
-    "FlatSkillPipeline",
-    "OccupationSampleBuilder",
     "OccupationSkillDictionaryStore",
     "OccupationSkillPipeline",
-    "RequirementCoverageEvaluator",
-    "SkillExtractionConfig",
-    "load_skill_extraction_config",
+    "FlatSkillPipeline",
 ]
+
+
+def __getattr__(name: str):
+    if name == "OccupationBGEMatcher":
+        from .bge_matcher import OccupationBGEMatcher
+
+        return OccupationBGEMatcher
+    if name == "OccupationSkillDictionaryStore":
+        from .history.dictionary_store import OccupationSkillDictionaryStore
+
+        return OccupationSkillDictionaryStore
+    if name == "OccupationSkillPipeline":
+        from .history.occupation_skill_pipeline import OccupationSkillPipeline
+
+        return OccupationSkillPipeline
+    if name == "FlatSkillPipeline":
+        from .occupation_skill_pipeline import FlatSkillPipeline
+
+        return FlatSkillPipeline
+    raise AttributeError(name)

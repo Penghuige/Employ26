@@ -9,7 +9,8 @@ data/
 output/
 !output/.gitkeep
 src/bge/data5/
-
+gpt_knowledge_out/
+archive/
 # Python
 __pycache__/
 *.py[cod]
@@ -36,12 +37,9 @@ wheels/
 .ipynb_checkpoints
 *.ipynb
 
-# 环境
-venv/
-env/
-ENV/
-.venv
-.conda/
+# 本地运行配置
+.env
+.env.local
 
 
 # IDE

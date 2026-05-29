@@ -27,7 +27,7 @@ from .context_labels import (
     LABEL_TO_ID,
     VALID_HARD_SKILL_LABEL,
 )
-from .llm_labeling_utils import safe_text
+from ..utils.llm_labeling_utils import safe_text
 
 
 logger = logging.getLogger(__name__)

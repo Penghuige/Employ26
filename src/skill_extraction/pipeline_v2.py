@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from .config import load_skill_extraction_config
 from .occupation_skill_pipeline import (
@@ -10,6 +11,12 @@ from .occupation_skill_pipeline import (
     DEFAULT_MODEL_PATH,
     FlatSkillPipeline,
 )
+
+RECOMMENDED_LOCAL_MODELS = [
+    "models/hf/Qwen2.5-14B-Instruct",
+    "models/hf/DeepSeek-R1-Distill-Qwen-14B",
+    "models/hf/Qwen2.5-7B-Instruct",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,7 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-model-len", type=int, default=8192, help="vLLM 最大序列长度")
     parser.add_argument("--max-num-seqs", type=int, default=48, help="vLLM 最大并发序列数")
     parser.add_argument("--output", type=str, default=None, help="输出词典路径")
+    parser.add_argument("--print-model-choice", action="store_true", help="打印当前自动选择的本地模型并退出")
     return parser
+
+
+def _resolve_model_path(config, cli_model: str | None) -> str:
+    if cli_model:
+        return cli_model
+    return str(config.llm_model_path)
 
 
 def main() -> None:
@@ -47,9 +61,13 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     config = load_skill_extraction_config()
+    resolved_model = _resolve_model_path(config, args.model)
+    if args.print_model_choice:
+        print(resolved_model)
+        return
     pipeline = FlatSkillPipeline(
         config=config,
-        model_path=args.model,
+        model_path=resolved_model,
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_model_len,
         max_num_seqs=args.max_num_seqs,
