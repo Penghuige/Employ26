@@ -1,6 +1,6 @@
-"""本地 RAG 流程模块（职业知识库场景）。"""
+"""RAG v2 模块（DuckDB 数据源 + bge-large + DeepSeek V4 Pro）。"""
 
 from .config import RAGConfig
-from .pipeline import LocalOccupationRAG
+from .pipeline import OccupationRAG
 
-__all__ = ["RAGConfig", "LocalOccupationRAG"]
+__all__ = ["RAGConfig", "OccupationRAG"]

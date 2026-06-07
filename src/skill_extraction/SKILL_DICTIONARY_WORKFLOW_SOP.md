@@ -1,201 +1,185 @@
-# Skill Dictionary Workflow SOP
+# 技能词典工作流标准操作流程（SOP）
 
-## Goal
+## 目标
 
-This SOP standardizes iteration for `src/skill_extraction` so each round follows
-the same control flow:
+本 SOP 用于规范 `src/skill_extraction` 的迭代流程，确保每一轮都遵循相同的控制流：
 
-1. Run baseline dictionary matching.
-2. Run regression evaluation.
-3. Classify the current error mode.
-4. Apply only conservative changes.
-5. Re-run matching and evaluation.
-6. Stop when metrics meet targets or when the workflow is blocked.
+1. 运行基线词典匹配。
+2. 运行回归评估。
+3. 判断当前错误模式。
+4. 仅应用保守性修改。
+5. 重新运行匹配与评估。
+6. 当指标达到目标或工作流被阻塞时停止。
 
-The fixed framework does not change. Only the repair action inside a round can
-change, based on the observed error pattern.
+固定框架本身不发生变化。每一轮中只有修复动作可以根据观察到的错误模式进行调整。
 
-## Entry Points
+## 入口命令
 
-### 1. Baseline only
+### 1. 仅运行基线
 
 ```bash
 python -m src.skill_extraction.skill_dictionary_workflow baseline
 ```
 
-Use this to refresh the current baseline and write workflow state without
-changing the dictionary.
+用于刷新当前基线，并写入工作流状态，但不会修改词典。
 
-### 2. Full normalized workflow
+### 2. 运行完整标准化工作流
 
 ```bash
 python -m src.skill_extraction.skill_dictionary_workflow run
 ```
 
-This executes the configured iterative workflow and writes a persistent state
-file.
+该命令会执行已配置的迭代工作流，并写入持久化状态文件。
 
-### 3. Workflow status
+### 3. 查看工作流状态
 
 ```bash
 python -m src.skill_extraction.skill_dictionary_workflow status
 ```
 
-This reads the latest workflow state and shows the current stage, metrics, and
-next action.
+该命令会读取最新的工作流状态，并显示当前阶段、指标和下一步动作。
 
-## State And Artifacts
+## 状态与产物
 
-- Workflow state:
+- 工作流状态：
   `output/skill_extraction/reports/dictionary_iteration/workflow_state.json`
-- Per-round iteration reports:
+- 每轮迭代报告：
   `output/skill_extraction/reports/dictionary_iteration/`
-- Regression summaries:
+- 回归评估汇总：
   `output/skill_extraction/reports/regression_eval/`
-- Dictionary rules:
+- 词典规则：
   `config/skill_dictionary_iteration.json`
 
-## Fixed Stages
+## 固定阶段
 
-### Stage A: Baseline Evaluation
+### 阶段 A：基线评估
 
-Always run:
+始终运行：
 
 - `match_flat_skills_to_duckdb.py`
 - `regression_eval.py`
 
-Outputs:
+输出内容：
 
-- baseline precision / recall / F1
-- top false positives
-- top false negatives
-- error mode classification
+- 基线 precision / recall / F1
+- 主要 false positives
+- 主要 false negatives
+- 错误模式分类
 
-### Stage B: Error Mode Classification
+### 阶段 B：错误模式分类
 
-The workflow classifies the round into one of these modes:
+工作流会将当前轮次归类为以下模式之一：
 
 - `precision_first`
-  False positives dominate. Prefer filters, alias cleanup, and contextual
-  constraints.
+  误报占主导。优先采用过滤规则、别名清理和上下文约束。
 - `recall_first`
-  False negatives dominate. Prefer conservative additions, canonical merges,
-  and controlled aliases.
+  漏报占主导。优先采用保守性补充、规范名合并和受控别名。
 - `balanced`
-  Both sides are similar. Prefer minimal mixed fixes.
+  两侧问题相近。优先采用最小化的混合修复。
 
-### Stage C: Conservative Repair
+### 阶段 C：保守性修复
 
-Allowed actions:
+允许的动作：
 
-- add high-confidence candidate skills
-- merge canonical synonyms
-- add short-term allowlist entries
-- add contextual matching rules
-- block generic skill names
-- block unsafe aliases
+- 添加高置信度候选技能
+- 合并规范同义词
+- 添加短期 allowlist 条目
+- 添加上下文匹配规则
+- 屏蔽过于泛化的技能名称
+- 屏蔽不安全别名
 
-Disallowed actions:
+禁止的动作：
 
-- bulk rewriting the whole dictionary
-- sending the full dictionary to API models
-- adding low-confidence candidates directly to the main dictionary
-- repeating a previously rejected error pattern without a new rule
+- 整体性重写整份词典
+- 将完整词典发送给 API 模型
+- 将低置信度候选直接加入主词典
+- 在没有新规则的情况下重复此前已被否决的错误模式
 
-### Stage D: Re-evaluation
+### 阶段 D：重新评估
 
-After every repair round, always re-run:
+每一轮修复后，始终重新运行：
 
-- dictionary match
-- regression eval
+- 词典匹配
+- 回归评估
 
-Then compare:
+随后比较：
 
 - precision delta
 - recall delta
 - F1 delta
 
-## Model Responsibilities
+## 模型职责
 
-### Local LLM
+### 本地 LLM
 
-Use for:
+用于：
 
-- candidate discovery
-- low-cost extraction probes
+- 候选发现
+- 低成本抽取探测
 
-Do not use local LLM as the final arbiter when structured output quality is
-unstable.
+当结构化输出质量不稳定时，不应将本地 LLM 作为最终裁决者。
 
 ### `gpt-5.4-mini`
 
-Use only for:
+仅用于：
 
-- high-uncertainty candidate adjudication
-- boundary-case review
-- small-sample quality audit
+- 高不确定性候选裁决
+- 边界样本复核
+- 小样本质量审计
 
-Constraints:
+约束：
 
-- never review the full dictionary
-- default cap is `max_api_reviews`
-- prompts must contain only the current sample, candidate list, and minimal
-  evidence
+- 绝不审查完整词典
+- 默认上限为 `max_api_reviews`
+- 提示词中只能包含当前样本、候选列表和最小必要证据
 
-## Stop Conditions
+## 停止条件
 
-The workflow stops when one of these is true:
+当以下任一条件成立时，工作流停止：
 
 1. `precision >= precision_target`
 2. `recall >= recall_target`
 3. `f1 >= f1_target`
-4. no API-reviewed candidate is kept and workflow policy says stop
-5. metric gain is below workflow thresholds and workflow policy says stop
-6. max rounds reached
+4. 没有任何经 API 审核的候选被保留，且工作流策略要求停止
+5. 指标提升低于工作流阈值，且工作流策略要求停止
+6. 达到最大轮次
 
-Targets and stopping thresholds live in:
+目标值与停止阈值定义在：
 
 - `config/skill_dictionary_iteration.json`
 
-## Why Repair Actions Can Change
+## 为什么修复动作可以变化
 
-The framework is fixed, but the repair action cannot be a single repeated
-template because late-round errors are different from early-round errors.
+框架是固定的，但修复动作不能机械地重复同一套模板，因为后期轮次的错误类型与前期轮次不同。
 
-Typical sequence:
+典型序列如下：
 
-- early rounds: generic false positives, synonym normalization, obvious missing
-  tools
-- middle rounds: long-tail missing technical terms
-- late rounds: short acronyms, context-dependent aliases, 2-character Chinese
-  terms
+- 前期轮次：泛化误报、同义词规范化、明显缺失的工具项
+- 中期轮次：长尾缺失的技术术语
+- 后期轮次：短缩写、依赖上下文的别名、两个汉字的中文术语
 
-These require different repair methods. Repeating the same “extract candidates
-+ review + merge” action every round would overfit recall and reintroduce
-precision failures.
+这些问题需要不同的修复方式。如果每一轮都重复同样的“抽取候选 + 审核 + 合并”动作，就会对 recall 过拟合，并重新引入 precision 失效问题。
 
-## Recommended Operating Rule
+## 推荐操作规则
 
-Use this decision policy:
+建议采用以下决策策略：
 
-- If the issue is a generic false positive, add a filter or contextual rule.
-- If the issue is a canonical synonym miss, add a merge or alias.
-- If the issue is a clear long-tail hard skill, add conservatively.
-- If the issue is an ambiguous short acronym, keep it in review unless context
-  can constrain it.
-- If the issue remains ambiguous after one review round, stop and escalate to
-  manual confirmation.
+- 如果问题是泛化误报，则添加过滤规则或上下文规则。
+- 如果问题是规范同义词遗漏，则添加合并规则或别名。
+- 如果问题是明确的长尾硬技能，则保守地加入。
+- 如果问题是有歧义的短缩写，则保留在审核队列中，除非上下文能够约束。
+- 如果某个问题经过一轮审核后仍然存在歧义，则停止并升级为人工确认。
 
-## Current Controller
+## 当前控制器
 
-The normalized controller is implemented in:
+标准化控制器实现于：
 
 - [skill_dictionary_workflow.py](/D:/PythonProjects/Employ26/src/skill_extraction/skill_dictionary_workflow.py)
 
-It provides:
+其提供的能力包括：
 
-- baseline execution
-- persistent workflow state
-- round history
-- target-based stop conditions
-- explicit next-action decisions
+- 基线执行
+- 持久化工作流状态
+- 轮次历史
+- 基于目标的停止条件
+- 显式的下一步动作决策

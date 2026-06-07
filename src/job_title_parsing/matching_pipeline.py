@@ -172,6 +172,53 @@ class MatchPipeline:
 
         return {"level": "none", "fuzzy_score": round(best_ratio, 6), "matched_text": best_name}
 
+    def _build_no_candidate_result(
+        self,
+        *,
+        job_id: Any,
+        job_title: str,
+        clean_title: str,
+        jd_info: Dict[str, Any],
+        feature_info: Dict[str, Any],
+        generic_penalty: float,
+        filtered_count: int,
+        debug: bool,
+    ) -> Dict[str, Any]:
+        """构造无可解释召回时的低置信结果，避免表顺序候选污染 top1。"""
+        confidence_info = self.scorer.build_confidence_flags([])
+        return {
+            "job_id": job_id,
+            "job_title": job_title,
+            "clean_title": clean_title,
+            "platform_terms": feature_info["platform_terms"],
+            "domain_terms": feature_info["domain_terms"],
+            "function_terms": feature_info["function_terms"],
+            "object_terms": feature_info["object_terms"],
+            "conflict_terms": feature_info["conflict_terms"],
+            "confidence_level": confidence_info["confidence_level"],
+            "risk_flags": confidence_info["risk_flags"],
+            "top1_top2_margin": confidence_info["top1_top2_margin"],
+            "is_review_needed": confidence_info["is_review_needed"],
+            "top1_code": "",
+            "top1_title": "",
+            "top1_score": 0.0,
+            "candidates": [],
+            "debug_info": {
+                "jd_clean": jd_info["jd_clean"],
+                "jd_sentences": jd_info["jd_sentences"],
+                "core_task_sentences": jd_info["core_task_sentences"],
+                "domain_keywords": jd_info["domain_keywords"],
+                "feature_info": feature_info,
+                "generic_penalty": generic_penalty,
+                "candidate_conflict_penalty": {},
+                "confidence_info": confidence_info,
+                "filtered_candidate_count": filtered_count,
+                "no_candidate_reason": "title_and_task_retrieval_empty_after_hierarchy_filter",
+            }
+            if debug
+            else None,
+        }
+
     def match_one(
         self,
         job_title: str,
@@ -180,7 +227,25 @@ class MatchPipeline:
         top_k: Optional[int] = None,
         debug: bool = False,
     ) -> Dict[str, Any]:
-        """对单条岗位执行完整匹配。"""
+        """对单条岗位执行完整匹配流程。
+
+        流程：标题清洗 → 别名映射 → JD 解析 → 特征抽取 → 泛标题惩罚 →
+              层级过滤 → title/task 双路 BM25 召回 → n-gram 描述打分 →
+              候选遍历打分（别名奖励、title 直接命中、task overlap、冲突惩罚）→
+              分数归一化与融合 → TopK 排序 → 置信度标记。
+
+        Args:
+            job_title: 原始岗位名称。
+            job_description: 原始岗位描述（可为空字符串）。
+            job_id: 岗位唯一标识（可选）。
+            top_k: 返回的候选数量，默认从 config 读取。
+            debug: 是否在结果中包含完整 debug_info。
+
+        Returns:
+            Dict[str, Any]: 包含 top1_code, top1_title, top1_score, candidates,
+                            confidence_level, risk_flags, is_review_needed,
+                            clean_title, 结构化特征词等字段的匹配结果字典。
+        """
         if self.catalog_df.empty or self.title_index is None or self.task_index is None:
             raise ValueError("职业大典尚未加载，请先调用 load_catalog_csv/load_catalog_duckdb/load_catalog_df")
 
@@ -211,7 +276,16 @@ class MatchPipeline:
 
         candidate_indices = list(set(title_scores_raw) | set(task_scores_raw))
         if not candidate_indices:
-            candidate_indices = list(filtered_df.index[:candidate_pool])
+            return self._build_no_candidate_result(
+                job_id=job_id,
+                job_title=job_title,
+                clean_title=clean_title,
+                jd_info=jd_info,
+                feature_info=feature_info,
+                generic_penalty=generic_penalty,
+                filtered_count=len(filtered_df),
+                debug=debug,
+            )
 
         ngram_n = int(self.config.get("retrieval", {}).get("char_ngram_n", 2))
         desc_scores_raw: Dict[int, float] = {}
@@ -284,9 +358,11 @@ class MatchPipeline:
                     "code": row.get("code", ""),
                     "title": row.get("title", ""),
                     "final_score": round(final_score, 6),
+                    "title_bm25_raw_score": round(title_scores_raw.get(idx, 0.0), 6),
                     "title_bm25_score": round(title_scores.get(idx, 0.0), 6),
                     "title_fuzzy_score": round(title_fuzzy_raw.get(idx, 0.0), 6),
                     "title_match_level": title_match_level_raw.get(idx, "none"),
+                    "task_bm25_raw_score": round(task_scores_raw.get(idx, 0.0), 6),
                     "task_bm25_score": round(task_scores.get(idx, 0.0), 6),
                     "desc_ngram_score": round(desc_scores.get(idx, 0.0), 6),
                     "hierarchy_match_bonus": round(hierarchy_scores.get(idx, 0.0), 6),
@@ -410,7 +486,23 @@ class MatchPipeline:
         chunk_size: int = 256,
         executor_backend: str = "thread",
     ) -> pd.DataFrame:
-        """批量岗位匹配。"""
+        """批量岗位匹配，支持多线程/多进程并发。
+
+        Args:
+            jobs_df: 招聘岗位 DataFrame，至少包含岗位名称和岗位描述列。
+            job_title_col: 岗位名称字段名。
+            job_desc_col: 岗位描述字段名。
+            job_id_col: 岗位唯一标识字段名。
+            top_k: 每条岗位返回的候选职业数量。
+            debug: 是否输出 debug_info 列。
+            workers: 并发 worker 数（<=1 时单线程）。
+            show_progress: 是否显示 tqdm 进度条。
+            chunk_size: 每个并发任务处理的岗位行数。
+            executor_backend: 并发后端，"thread" 或 "process"。
+
+        Returns:
+            pd.DataFrame: 每条岗位一行的匹配结果 DataFrame。
+        """
         rows = list(jobs_df.to_dict(orient="records"))
         if not rows:
             return pd.DataFrame()

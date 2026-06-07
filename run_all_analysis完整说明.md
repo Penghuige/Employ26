@@ -515,3 +515,41 @@ python run_all_analysis.py
 **文档版本**：v1.0  
 **更新时间**：2026-03-08  
 **总输出文件**：15个（4 TXT + 4 HTML + 7 CSV + 1 XLSX）
+
+
+mkdir -p /home/lin/llama_slots
+
+/home/lin/llama.cpp/build/bin/llama-server \
+  -m /home/lin/models/Qwen3.6-27B-Uncensored-Balanced/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf \
+  --host 0.0.0.0 \
+  --port 8100 \
+  -c 8960 \
+  -ngl 999 \
+  -fa on \
+  -b 2048 \
+  -ub 512 \
+  -np 1 \
+  --no-cache-idle-slots \
+  --cache-prompt \
+  --metrics \
+  --alias Qwen3.6-27B-Uncensored-Balanced
+
+
+mkdir -p /home/lin/llama_slots
+
+/home/lin/llama.cpp/build/bin/llama-server \
+  -m /home/lin/models/Qwen3.6-27B-Uncensored-Balanced/Qwen3.6-27B-Uncensored-HauhauCS-Balanced-Q4_K_P.gguf \
+  --host 0.0.0.0 \
+  --port 8100 \
+  -c 8960 \
+  -ngl 999 \
+  -fa on \
+  -b 2048 \
+  -ub 512 \
+  -np 1 \
+  --no-cache-idle-slots \
+  --cache-prompt \
+  --metrics \
+  --alias Qwen3.6-27B-Uncensored-Balanced \
+  --chat-template-kwargs '{"enable_thinking":false}' \
+  --reasoning off

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict
+import warnings
 
 import pandas as pd
 
@@ -26,6 +27,7 @@ class HierarchyFilter:
         if not target.is_absolute():
             target = PROJECT_ROOT / target
         if not target.exists():
+            warnings.warn(f"层级关键词词典不存在，将仅使用配置内置映射: {target}", RuntimeWarning, stacklevel=2)
             return {}
 
         mapping: Dict[str, str] = {}
@@ -43,7 +45,18 @@ class HierarchyFilter:
         return mapping
 
     def filter_candidates_by_hierarchy(self, job_text: str, catalog_df: pd.DataFrame) -> pd.DataFrame:
-        """根据 job_text 判断粗层级，若无法判断则不过滤。"""
+        """根据岗位文本推断职业大类，过滤候选职业大典行。
+
+        若 key_word_to_major 词典中无任何关键词命中，则不做过滤，原样返回全部候选。
+        若过滤后为空，同样退回全量候选。
+
+        Args:
+            job_text: 合并了标题和 JD 的文本。
+            catalog_df: 职业大典 DataFrame（需含"大类"列）。
+
+        Returns:
+            pd.DataFrame: 过滤后的职业大典子集（或原全集）。
+        """
         inferred = self.infer_major(job_text)
         if not inferred:
             return catalog_df
@@ -53,7 +66,14 @@ class HierarchyFilter:
         return filtered if not filtered.empty else catalog_df
 
     def infer_major(self, job_text: str) -> str:
-        """根据关键词推断大类。"""
+        """根据关键词推断岗位所属的职业大类。
+
+        Args:
+            job_text: 岗位描述文本。
+
+        Returns:
+            str: 推断出的职业大类（如 "2"），无法判断时返回空字符串。
+        """
         text = str(job_text)
         for keyword, major in self.keyword_to_major.items():
             if keyword in text:
@@ -61,7 +81,15 @@ class HierarchyFilter:
         return ""
 
     def hierarchy_match_bonus(self, job_text: str, row: pd.Series) -> float:
-        """若候选职业命中推断层级，则返回基础分。"""
+        """若候选职业的"大类"与推断层级一致，则返回基础奖励分。
+
+        Args:
+            job_text: 岗位描述文本。
+            row: 职业大典单行记录。
+
+        Returns:
+            float: 命中返回 1.0，否则 0.0。
+        """
         inferred = self.infer_major(job_text)
         if not inferred:
             return 0.0

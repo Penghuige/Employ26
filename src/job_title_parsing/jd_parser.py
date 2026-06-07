@@ -17,7 +17,16 @@ class JDParser:
         self.domain_dict: List[str] = jd_cfg.get("domain_keywords", [])
 
     def parse(self, job_description: str) -> Dict[str, Any]:
-        """解析 JD，为后续检索与融合提供轻量特征。"""
+        """解析岗位描述，为后续检索与融合提供轻量特征。
+
+        Args:
+            job_description: 原始岗位描述文本。
+
+        Returns:
+            Dict[str, Any]: 包含 jd_clean（清洗后全文）, jd_sentences（句子列表）,
+                            core_task_sentences（含动作动词的核心职责句）,
+                            domain_keywords（领域关键词列表）。
+        """
         jd_clean = normalize_text(job_description)
         jd_sentences = self._split_sentences(jd_clean)
         core_task_sentences = [

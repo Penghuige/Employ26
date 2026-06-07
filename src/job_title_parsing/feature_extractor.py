@@ -13,14 +13,27 @@ class JobFeatureExtractor:
 
     def __init__(self, dict_dir: str | Path | None = None):
         base_dir = Path(dict_dir) if dict_dir else PROJECT_ROOT / "dicts"
-        self.platform_terms = read_text_lines(base_dir / "job_platform_terms.txt")
-        self.domain_terms = read_text_lines(base_dir / "job_domain_terms.txt")
-        self.function_terms = read_text_lines(base_dir / "job_function_terms.txt")
-        self.object_terms = read_text_lines(base_dir / "job_object_terms.txt")
-        self.conflict_terms = read_text_lines(base_dir / "job_conflict_terms.txt")
+        self.platform_terms = read_text_lines(base_dir / "job_platform_terms.txt", warn_missing=True)
+        self.domain_terms = read_text_lines(base_dir / "job_domain_terms.txt", warn_missing=True)
+        self.function_terms = read_text_lines(base_dir / "job_function_terms.txt", warn_missing=True)
+        self.object_terms = read_text_lines(base_dir / "job_object_terms.txt", warn_missing=True)
+        self.conflict_terms = read_text_lines(base_dir / "job_conflict_terms.txt", warn_missing=True)
 
     def extract(self, title: str, job_description: str) -> Dict[str, List[str]]:
-        """抽取结构化特征。"""
+        """从岗位标题和描述中抽取结构化特征词。
+
+        从 dicts/ 下的 job_platform_terms.txt / job_domain_terms.txt /
+        job_function_terms.txt / job_object_terms.txt / job_conflict_terms.txt
+        加载词典，命中返回。
+
+        Args:
+            title: 岗位标题。
+            job_description: 岗位描述。
+
+        Returns:
+            Dict[str, List[str]]: 包含 platform_terms, domain_terms, function_terms,
+                                  object_terms, conflict_terms, title_terms, jd_terms。
+        """
         title_text = normalize_text(title)
         jd_text = normalize_text(job_description)
         merged_text = f"{title_text} {jd_text}".strip()

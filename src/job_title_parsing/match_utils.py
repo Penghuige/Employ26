@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 import json
 import re
+import warnings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -106,7 +107,14 @@ def load_database_config(config_path: str | Path | None = None) -> Dict[str, Any
 
 
 def normalize_text(text: Any) -> str:
-    """基础文本清洗：统一空白、全角/半角常见符号。"""
+    """基础文本清洗：统一空白、全角/半角常见符号。
+
+    Args:
+        text: 待清洗文本（支持 str/None）。
+
+    Returns:
+        str: 清洗后的文本。
+    """
     text = "" if text is None else str(text)
     text = text.replace("\u3000", " ")
     text = text.replace("；", ";").replace("，", ",")
@@ -118,7 +126,14 @@ def normalize_text(text: Any) -> str:
 
 
 def normalize_compact(text: Any) -> str:
-    """用于精确比较的紧凑规范化文本。"""
+    """用于精确比较的紧凑规范化文本，去除所有空白与分隔符后转小写。
+
+    Args:
+        text: 待处理文本。
+
+    Returns:
+        str: 紧凑规范化后的文本。
+    """
     cleaned = normalize_text(text)
     cleaned = re.sub(r"[\s\-_/|]+", "", cleaned)
     return cleaned.lower()
@@ -142,12 +157,14 @@ def read_json(path: str | Path) -> Dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def read_text_lines(path: str | Path) -> List[str]:
+def read_text_lines(path: str | Path, warn_missing: bool = False) -> List[str]:
     """读取文本词典，忽略空行与注释。"""
     target = Path(path)
     if not target.is_absolute():
         target = PROJECT_ROOT / target
     if not target.exists():
+        if warn_missing:
+            warnings.warn(f"词典文件不存在，将跳过加载: {target}", RuntimeWarning, stacklevel=2)
         return []
     results: List[str] = []
     for line in target.read_text(encoding="utf-8").splitlines():
@@ -164,7 +181,14 @@ def load_stopwords(path: str | Path) -> List[str]:
 
 
 def min_max_normalize(score_map: Dict[int, float]) -> Dict[int, float]:
-    """对候选分数字典做 min-max 归一化到 [0,1]。"""
+    """对候选分数字典做 min-max 归一化到 [0, 1]。
+
+    Args:
+        score_map: {候选索引: 原始分数} 字典。
+
+    Returns:
+        Dict[int, float]: 归一化后的字典。若所有值相同则非零值映射为 1.0。
+    """
     if not score_map:
         return {}
     values = list(score_map.values())

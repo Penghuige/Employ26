@@ -26,6 +26,16 @@ class JobTitleCleaner:
             ],
         )
         self.english_role_keywords: List[str] = [
+            "ceo",
+            "cto",
+            "coo",
+            "cfo",
+            "hr",
+            "hrbp",
+            "pm",
+            "bd",
+            "ui",
+            "ux",
             "engineer",
             "developer",
             "manager",
@@ -37,13 +47,31 @@ class JobTitleCleaner:
             "scientist",
             "product",
             "qa",
+            "qc",
             "devops",
             "sre",
+            "seo",
+            "sem",
+            "java",
+            "python",
+            "android",
+            "ios",
         ]
         self.core_tail_patterns = [r"店$", r"门店$", r"商场$"]
 
     def clean(self, job_title: str) -> str:
-        """清洗岗位名称，仅保留职业核心词。"""
+        """清洗岗位名称，去除招聘营销词、薪资、地点、编码等噪声，仅保留职业核心词。
+
+        处理顺序：纯噪声模式过滤 → 噪声短语替换 → 薪资表达移除 → 括号内容移除 →
+                  分隔符噪声裁剪 → 地点后缀移除 → 型号尾号移除 → 城市/品牌前缀移除 →
+                  剩余福利词移除 → whitespace 收拢 → 英文角色名守卫。
+
+        Args:
+            job_title: 原始岗位名称。
+
+        Returns:
+            str: 清洗后的岗位名称核心部分，若完全为噪声则返回空字符串。
+        """
         text = normalize_text(job_title)
         if not text:
             return ""
@@ -86,9 +114,9 @@ class JobTitleCleaner:
         text = re.sub(r"[,_|/\-]+", " ", text)
         text = re.sub(r"\s+", "", text)
 
-        # 纯数字/纯英文残片直接判空
+        # 纯数字/无职业含义的英文编码残片直接判空，常见英文岗位缩写保留。
         if re.fullmatch(r"[\dA-Za-z]+", text or ""):
-            return ""
+            return text if self._is_pure_english_role(text) else ""
 
         # 剩余文本过于口号化则判空
         if len(text) <= 1:
@@ -96,6 +124,16 @@ class JobTitleCleaner:
         if any(re.search(p, text) for p in self.core_tail_patterns) and len(text) <= 3:
             return ""
         return text
+
+    def _is_pure_english_role(self, text: str) -> bool:
+        """判断纯英文/字母数字文本是否像岗位名，而不是内部编码。"""
+        source = str(text or "").strip()
+        if not source or source.isdigit():
+            return False
+        lower = source.lower()
+        if any(keyword in lower for keyword in self.english_role_keywords):
+            return True
+        return bool(re.fullmatch(r"[A-Z]{2,6}", source))
 
     def _strip_tail_code(self, text: str) -> str:
         """删除尾部型号编码，避免误删英文岗位名称。"""

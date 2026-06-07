@@ -26,7 +26,19 @@ class HierarchyKeywordBuilder:
         top_n_per_major: int = 80,
         min_freq: int = 5,
     ) -> Path:
-        """从职业大典 DataFrame 构建关键词->大类词典。"""
+        """从职业大典 DataFrame 构建关键词→大类词典并写入文件。
+
+        按大类分组统计高频关键词，按频次×区分度排序，每大类取 top_n_per_major 个。
+
+        Args:
+            catalog_df: 职业大典 DataFrame。
+            output_path: 输出词典路径（相对于项目根或绝对路径）。
+            top_n_per_major: 每个大类最多保留的关键词数量。
+            min_freq: 关键词进入词典的最低出现次数。
+
+        Returns:
+            Path: 写入的词典文件绝对路径。
+        """
         required_cols = ["大类", "中类", "小类", "细类", "title", "desc", "tasks"]
         work_df = catalog_df.copy()
         for col in required_cols:

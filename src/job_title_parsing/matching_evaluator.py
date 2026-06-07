@@ -56,7 +56,17 @@ def _evaluate_rows(rows: List[Tuple[str, str, Any]]) -> Tuple[int, int, int, int
 
 
 def evaluate_matches(result_df: pd.DataFrame, show_progress: bool = False) -> Dict[str, float]:
-    """计算 top1 accuracy / top3 recall / top5 recall / unmatched rate。"""
+    """单线程评估匹配结果。
+
+    要求 result_df 包含 gold_code / top1_code / candidates 字段。
+
+    Args:
+        result_df: 匹配结果 DataFrame。
+        show_progress: 是否显示进度条。
+
+    Returns:
+        Dict[str, float]: 含 top1_accuracy, top3_recall, top5_recall, unmatched_rate, sample_size。
+    """
     if result_df.empty:
         return {
             "top1_accuracy": 0.0,
@@ -95,7 +105,19 @@ def evaluate_matches_parallel(
     chunk_size: int = 20000,
     show_progress: bool = False,
 ) -> Dict[str, float]:
-    """并行评估，适合超大样本。"""
+    """并行评估匹配结果，通过 ProcessPoolExecutor 加速超大样本。
+
+    当 workers <= 1 或样本量 <= chunk_size 时自动回退到单线程版本。
+
+    Args:
+        result_df: 匹配结果 DataFrame。
+        workers: 并行进程数。
+        chunk_size: 每个进程处理的记录数。
+        show_progress: 是否显示进度条。
+
+    Returns:
+        Dict[str, float]: 含 top1_accuracy, top3_recall, top5_recall, unmatched_rate, sample_size。
+    """
     if workers <= 1 or len(result_df) <= chunk_size:
         return evaluate_matches(result_df, show_progress=show_progress)
 

@@ -21,7 +21,16 @@ class AliasBuilder:
             self.external_alias_dict = read_json(alias_dict_path)
 
     def build_aliases(self, title: str) -> List[str]:
-        """为单个职业 title 生成 aliases。人工优先，规则补充。"""
+        """为单个职业 title 生成别名列表。
+
+        来源优先级：外部人工维护词典 → 弱后缀裁剪规则 → manual_mapping 反向映射。
+
+        Args:
+            title: 职业标准名称。
+
+        Returns:
+            List[str]: 去重后的别名列表。
+        """
         title = str(title).strip()
         aliases: List[str] = []
 
@@ -41,5 +50,12 @@ class AliasBuilder:
         return unique_keep_order(aliases)
 
     def resolve_manual_alias(self, text: str) -> str:
-        """将口语岗位名映射到标准岗位名。"""
+        """将口语化/非标准岗位名映射到标准职业名。
+
+        Args:
+            text: 待映射的岗位名。
+
+        Returns:
+            str: 若命中 manual_mapping 则返回标准名，否则原样返回。
+        """
         return self.manual_mapping.get(text, text)

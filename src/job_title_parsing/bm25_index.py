@@ -79,7 +79,15 @@ class BM25Index:
         return [w.strip() for w in jieba.lcut(text) if w.strip() and w.strip() not in self.stopwords]
 
     def search(self, query: str, top_k: int = 10) -> List[Dict[str, float]]:
-        """通用检索接口。"""
+        """通用 BM25 检索接口。
+
+        Args:
+            query: 查询文本。
+            top_k: 返回的文档数量。
+
+        Returns:
+            List[Dict[str, float]]: 按分数降序的检索结果，每项含 index（文档索引）和 score。
+        """
         tokens = self.tokenize(query)
         if not tokens:
             return []

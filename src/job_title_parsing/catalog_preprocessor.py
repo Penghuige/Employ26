@@ -70,7 +70,7 @@ class CatalogPreprocessor:
         if limit is not None and limit > 0:
             query += f" LIMIT {int(limit)}"
 
-        conn = duckdb.connect(str(db_target))
+        conn = duckdb.connect(str(db_target), read_only=True)
         try:
             df = conn.execute(query).df()
         finally:
@@ -79,7 +79,18 @@ class CatalogPreprocessor:
         return self.preprocess(df)
 
     def preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
-        """标准化职业大典 DataFrame。"""
+        """标准化职业大典 DataFrame，生成检索所需的所有衍生字段。
+
+        产出字段：task_list, task_text_joined, title_clean, desc_clean,
+                 hierarchy_text, aliases, retrieval_title_text, retrieval_desc_text,
+                 retrieval_task_text。
+
+        Args:
+            df: 原始职业大典 DataFrame，需包含 code / title / desc / tasks 等字段。
+
+        Returns:
+            pd.DataFrame: 添加了预处理字段的 DataFrame。
+        """
         work_df = df.copy()
         for col in self.REQUIRED_COLUMNS:
             if col not in work_df.columns:

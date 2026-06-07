@@ -1,50 +1,43 @@
-from dataclasses import dataclass
+"""RAG v2 配置。"""
+from dataclasses import dataclass, field
+from typing import List
 
 
 @dataclass
 class RAGConfig:
-    """RAG 全局配置。
+    """RAG 全局配置（v2：DuckDB 数据源 + bge-large + DeepSeek 生成）。
 
-    说明：
-    1) 默认模型路径按你的本地环境预设；
-    2) 产物文件统一放在 src/rag/artifacts；
-    3) 可通过 CLI 参数覆写。
+    变更:
+    - 数据源从 Excel 切换为 DuckDB（recruit.main.*）
+    - 嵌入模型从 bge-base-zh-finetuned 切换为 bge-large-zh-v1.5
+    - 生成器从本地 Qwen3-8B 切换为 DeepSeek V4 Pro（API 调用）
+    - 启用双 chunk（definition + task）检索 + 层级重排序
     """
 
-    # -------------------------
-    # 1. 模型与知识库路径
-    # -------------------------
-    embedding_model_path: str = r"D:\model\bge-base-zh-finetuned"
-    generator_model_path: str = r"D:\model\Qwen3-8B"
-    kb_excel_path: str = r"data\中国职业大典.xlsx"
+    # ---- 数据源 ----
+    duckdb_path: str = r"output\recruit.duckdb"
+    catalog_table: str = "recruit.main.chinese_occupational_dictionary_joined_preprocessed"
 
-    # -------------------------
-    # 2. 索引产物路径
-    # -------------------------
-    index_path: str = r"src\rag\artifacts\occupation_index.faiss"
+    # ---- 模型路径 ----
+    embedding_model_path: str = r"D:\model\bge-large-zh-v1.5"
+
+    # ---- 索引产物 ----
+    index_dir: str = r"src\rag\artifacts"
+    def_index_path: str = r"src\rag\artifacts\occupation_def_index.faiss"
     task_index_path: str = r"src\rag\artifacts\occupation_task_index.faiss"
-    metadata_path: str = r"src\rag\artifacts\occupation_metadata.json"
+    metadata_path: str = r"src\rag\artifacts\occupation_metadata_v2.json"
 
-    # -------------------------
-    # 3. 推理参数
-    # -------------------------
-    embedding_batch_size: int = 128
+    # ---- 检索参数 ----
+    embedding_batch_size: int = 64
     top_k: int = 8
-    max_new_tokens: int = 320
-    do_sample: bool = False
-    temperature: float = 0.0
+    retrieval_pool_size: int = 30  # 粗召回池大小
+    def_weight: float = 0.6        # definition chunk 匹配权重
+    task_weight: float = 0.4       # task chunk 匹配权重
 
-    # -------------------------
-    # 4. 知识库字段候选
-    # -------------------------
-    title_candidates: tuple = ("title", "职业名称", "name")
-    code_candidates: tuple = ("code", "职业代码", "id")
-    desc_candidates: tuple = ("desc", "职业定义", "definition")
-    task_candidates: tuple = ("tasks", "主要工作任务", "task")
+    # ---- DeepSeek 生成参数 ----
+    generator_model: str = "deepseek-v4-pro"
+    max_tokens: int = 512
+    temperature: float = 0.1
 
-    # -------------------------
-    # 5. 分块策略
-    # -------------------------
-    # "merged": 每个职业生成一个 task chunk（默认，平衡速度与覆盖）
-    # "item":   每个 task_item 生成独立 chunk（更细粒度，适合长任务列表）
-    task_chunk_mode: str = "merged"
+    # ---- 层级字段候选 ----
+    hierarchy_fields: List[str] = field(default_factory=lambda: ["大类", "中类", "小类", "细类"])

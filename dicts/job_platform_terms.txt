@@ -1,0 +1,19 @@
+# 招聘岗位中的平台/渠道词。每行一个词，供特征抽取与冲突识别使用。
+亚马逊
+Amazon
+淘宝
+天猫
+京东
+拼多多
+抖音
+快手
+小红书
+微信
+美团
+饿了么
+FBA
+Shopify
+TikTok
+Google
+Facebook
+LinkedIn
