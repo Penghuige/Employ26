@@ -29,14 +29,17 @@ DATABASE_SETTINGS = DATABASE_CONFIG.get("database", {})
 JOB_TITLE_PARSING_SETTINGS = DATABASE_CONFIG.get("job_title_parsing", {})
 
 DEFAULT_DB_PATH = str(Path(__file__).resolve().parents[2] / DATABASE_SETTINGS.get("duckdb_path", "output/recruit.duckdb"))
-DEFAULT_CATALOG_TABLE = JOB_TITLE_PARSING_SETTINGS.get(
-    "catalog_table", "recruit.main.chinese_occupational_dictionary_joined"
-)
+DEFAULT_CATALOG_TABLE = JOB_TITLE_PARSING_SETTINGS.get("catalog_table", "public.occ_dict_detailed")
 DEFAULT_CATALOG_PREPROCESSED_TABLE = JOB_TITLE_PARSING_SETTINGS.get(
-    "catalog_preprocessed_table", "recruit.main.chinese_occupational_dictionary_joined_preprocessed"
+    "catalog_preprocessed_table", "public.occ_dict_pro"
 )
-DEFAULT_JOBS_TABLE = JOB_TITLE_PARSING_SETTINGS.get("jobs_table", "recruit.main.jobs_sample")
-DEFAULT_MATCH_RESULT_TABLE = JOB_TITLE_PARSING_SETTINGS.get("match_result_table", "recruit.main.job_match_results")
+DEFAULT_JOBS_TABLE = JOB_TITLE_PARSING_SETTINGS.get(
+    "jobs_table",
+    ['"Liepin".sample', '"51job".sample', '"Zhilian".sample'],
+)
+if isinstance(DEFAULT_JOBS_TABLE, list):
+    DEFAULT_JOBS_TABLE = ",".join(str(item) for item in DEFAULT_JOBS_TABLE)
+DEFAULT_MATCH_RESULT_TABLE = JOB_TITLE_PARSING_SETTINGS.get("match_result_table", "public.job_match_results")
 DEFAULT_WORKERS = max(1, min(32, (cpu_count() or 8) - 2))
 DEFAULT_DUCKDB_THREADS = max(1, min(32, int(DATABASE_SETTINGS.get("duckdb_threads", cpu_count() or 8))))
 
@@ -69,8 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "常用示例:\n"
             "  python -m src.job_title_parsing.cli preprocess-catalog\n"
-            "  python -m src.job_title_parsing.cli match --jobs-table recruit.main.jobs_sample --progress\n"
-            "  python -m src.job_title_parsing.cli evaluate --result-table recruit.main.job_match_results\n"
+            "  python -m src.job_title_parsing.cli match --progress\n"
+            "  python -m src.job_title_parsing.cli evaluate --result-table public.job_match_results\n"
         ),
         formatter_class=ChineseHelpFormatter,
         add_help=False,
@@ -163,8 +166,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _split_table_names(table_name_expr: str) -> list[str]:
     """解析表名参数。
 
-    `match` 和 `evaluate` 都允许一次读取多张 DuckDB 表。
-    例如：`recruit.main.jobs_a,recruit.main.jobs_b`。
+    `match` 和 `evaluate` 都允许一次读取多张表。
+    例如：`"Liepin".sample,"51job".sample`。
     """
     return [name.strip() for name in str(table_name_expr).split(",") if name.strip()]
 

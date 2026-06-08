@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 from typing import Any, Dict, List
 
+from config.paths import load_database_yaml
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "default.yaml"
 DEFAULT_DATABASE_CONFIG_PATH = PROJECT_ROOT / "config" / "database.yaml"
@@ -116,21 +118,31 @@ def load_database_config(config_path: str | Path | None = None) -> Dict[str, Any
     输入: config_path: 可选的配置文件路径，默认为 None，此时使用默认路径。
     返回：包含数据库连接和表信息的字典。
     """
-    target = Path(config_path) if config_path else DEFAULT_DATABASE_CONFIG_PATH
-    if not target.exists() or not target.read_text(encoding="utf-8").strip():
+    loaded = load_database_yaml(config_path or DEFAULT_DATABASE_CONFIG_PATH)
+    if not loaded:
         return {
             "database": {
+                "host": "localhost",
+                "port": 5432,
+                "dbname": "Employ26",
+                "user": "postgres",
+                "password": "",
+                "schema": "public",
                 "duckdb_path": "output/recruit.duckdb",
                 "duckdb_threads": 32,
             },
             "job_title_parsing": {
-                "catalog_table": "recruit.main.chinese_occupational_dictionary_joined",
-                "catalog_preprocessed_table": "recruit.main.chinese_occupational_dictionary_joined_preprocessed",
-                "jobs_table": "recruit.main.jobs_sample",
-                "match_result_table": "recruit.main.job_match_results",
+                "catalog_table": "public.occ_dict_detailed",
+                "catalog_preprocessed_table": "public.occ_dict_pro",
+                "jobs_table": [
+                    '"Liepin".sample',
+                    '"51job".sample',
+                    '"Zhilian".sample',
+                ],
+                "match_result_table": "public.job_match_results",
             },
         }
-    return simple_yaml_load(target)
+    return loaded
 
 def safe_print(value: object = "") -> None:
     """安全打印文本，避免 Windows 控制台编码限制导致程序崩溃。

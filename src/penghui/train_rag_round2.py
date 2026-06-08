@@ -19,15 +19,15 @@
     2. BGE 模型路径通过 config/paths.py 或环境变量 EMPLOYDATA_BGE_MODEL_PATH 配置
 """
 
+from __future__ import annotations
+
 import json
 import os
-import sys
 import time
 import random
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -36,21 +36,28 @@ from sentence_transformers import SentenceTransformer, InputExample, losses
 from torch.utils.data import DataLoader
 
 from config.paths import get_project_paths
+from .common import (
+    get_runtime_device,
+    get_training_output_dir,
+    load_annotations_from_pg,
+    load_occupation_dict_df,
+    resolve_base_model_path,
+)
 
 _project = get_project_paths()
 BASE_DIR = str(_project.project_root)
 
-ANNOTATION_FILE = os.path.join(BASE_DIR, "data", "project-4-at-2026-05-27-01-51-7cceb9ba.json")
-DICT_FILE = os.path.join(BASE_DIR, "data", "中国职业大典.xlsx")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output", "rag_round2_training")
+OUTPUT_DIR = str(get_training_output_dir())
 
 # 模型路径
-BASE_MODEL_PATH = str(_project.bge_model_path)
+BASE_MODEL_PATH = resolve_base_model_path()
 OUTPUT_MODEL_PATH = os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned")
 
 # ── 训练参数 ────────────────────────────────────────
 @dataclass
 class TrainConfig:
+    """RAG Round2 微调与评估配置。"""
+
     batch_size: int = 32
     epochs: int = 2
     learning_rate: float = 2e-5
@@ -63,7 +70,7 @@ class TrainConfig:
 
 
 # ── 辅助函数 ────────────────────────────────────────
-def parse_choice(annotation: Dict) -> Optional[str]:
+def parse_choice(annotation: dict[str, Any]) -> str | None:
     """从标注记录中提取最佳候选选择。"""
     for r in annotation.get("result", []):
         if r["from_name"] == "best_candidate_choice":
@@ -77,10 +84,9 @@ def parse_choice(annotation: Dict) -> Optional[str]:
     return None
 
 
-def load_occupation_dict(dict_path: str) -> Dict[str, str]:
+def load_occupation_dict(dict_path: str) -> dict[str, str]:
     """加载《中国职业大典》，返回 {code: full_text} 映射。"""
-    df = pd.read_excel(dict_path, engine="openpyxl")
-    df.fillna("", inplace=True)
+    df = load_occupation_dict_df()
 
     # 自动识别列名
     col_map = {}
@@ -94,7 +100,7 @@ def load_occupation_dict(dict_path: str) -> Dict[str, str]:
         else:
             col_map[target] = target
 
-    code_to_text = {}
+    code_to_text: dict[str, str] = {}
     for _, row in df.iterrows():
         code = str(row[col_map["code"]]).strip()
         title = str(row[col_map["title"]]).strip()
@@ -119,7 +125,7 @@ def load_occupation_dict(dict_path: str) -> Dict[str, str]:
 def extract_training_pairs(
     annotation_file: str,
     dict_file: str,
-) -> Tuple[List[Dict], List[Dict]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     从标注 JSON 提取训练正样本对。
 
@@ -132,16 +138,15 @@ def extract_training_pairs(
     print("=" * 70)
 
     # 加载数据
-    with open(annotation_file, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
+    raw_data = load_annotations_from_pg()
     print(f"  加载标注数据: {len(raw_data)} 条任务")
 
     code_to_text = load_occupation_dict(dict_file)
     print(f"  加载职业大典: {len(code_to_text)} 个职业细类")
 
     # 解析所有任务
-    single_pairs = []
-    multi_pairs = []
+    single_pairs: list[dict[str, Any]] = []
+    multi_pairs: list[dict[str, Any]] = []
     skipped_none = 0
     skipped_no_code = 0
     skipped_no_text = 0
@@ -232,10 +237,15 @@ def extract_training_pairs(
 
 # ── 2. 划分训练/测试集 ──────────────────────────────
 def split_train_test(
-    single_pairs: List[Dict],
-    multi_pairs: List[Dict],
+    single_pairs: list[dict[str, Any]],
+    multi_pairs: list[dict[str, Any]],
     config: TrainConfig,
-) -> Tuple[List[InputExample], List[Dict], List[InputExample], List[Dict]]:
+) -> tuple[
+    list[InputExample],
+    list[dict[str, Any]],
+    list[InputExample],
+    list[dict[str, Any]],
+]:
     """
     划分训练集和测试集。
 
@@ -269,7 +279,8 @@ def split_train_test(
         train_pairs = all_pairs[n_test:]
 
     # 构建 InputExample
-    def to_example(pair):
+    def to_example(pair: dict[str, Any]) -> InputExample:
+        """将训练对转换为 SentenceTransformer 输入样本。"""
         return InputExample(texts=[pair["anchor"], pair["positive"]])
 
     train_examples = [to_example(p) for p in train_pairs]
@@ -289,7 +300,7 @@ def split_train_test(
 
 # ── 3. 微调模型 ─────────────────────────────────────
 def train_model(
-    train_examples: List[InputExample],
+    train_examples: list[InputExample],
     config: TrainConfig,
 ) -> SentenceTransformer:
     """使用 MultipleNegativesRankingLoss 微调 BGE-M3。"""
@@ -297,7 +308,7 @@ def train_model(
     print("[Step 3] 微调 BGE-M3 模型")
     print("=" * 70)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_runtime_device()
     print(f"  设备: {device}")
     print(f"  基础模型: {BASE_MODEL_PATH}")
 
@@ -353,16 +364,16 @@ def train_model(
 # ── 4. 评估 ─────────────────────────────────────────
 def evaluate_model(
     model: SentenceTransformer,
-    test_pairs: List[Dict],
-    code_to_text: Dict[str, str],
+    test_pairs: list[dict[str, Any]],
+    code_to_text: dict[str, str],
     config: TrainConfig,
-):
+) -> dict[str, Any]:
     """在测试集上评估检索准确率（Top1/Top3/Top5）。"""
     print("\n" + "=" * 70)
     print("[Step 4] 评估检索准确率")
     print("=" * 70)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_runtime_device()
 
     # 构建职业大典向量库
     codes = sorted(code_to_text.keys())
@@ -401,7 +412,7 @@ def evaluate_model(
     ranked_indices = ranked_indices.cpu().tolist()
 
     # 统计命中率
-    topk_hits = {1: 0, 2: 0, 3: 0, 5: 0}
+    topk_hits: dict[int, int] = {1: 0, 2: 0, 3: 0, 5: 0}
     total = len(test_codes)
     per_class_correct = defaultdict(lambda: {"total": 0, "hit": 0})
 
@@ -516,7 +527,8 @@ def evaluate_model(
 
 
 # ── 主流程 ──────────────────────────────────────────
-def main():
+def main() -> None:
+    """执行 Round2 数据训练、评估与结果落盘。"""
     config = TrainConfig()
 
     print("=" * 70)
@@ -528,7 +540,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # Step 1: 提取训练数据
-    single_pairs, multi_pairs = extract_training_pairs(ANNOTATION_FILE, DICT_FILE)
+    single_pairs, multi_pairs = extract_training_pairs("", "")
 
     if len(single_pairs) + len(multi_pairs) == 0:
         print("ERROR: 无有效训练数据！")
@@ -543,7 +555,7 @@ def main():
     model = train_model(train_examples, config)
 
     # Step 4: 评估
-    code_to_text = load_occupation_dict(DICT_FILE)
+    code_to_text = load_occupation_dict("")
     results = evaluate_model(model, test_pairs, code_to_text, config)
 
     # ── 保存结果 ──

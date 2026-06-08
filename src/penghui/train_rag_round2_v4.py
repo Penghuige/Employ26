@@ -16,14 +16,15 @@
     2. BGE 模型路径通过 config/paths.py 或环境变量 EMPLOYDATA_BGE_MODEL_PATH 配置
 """
 
+from __future__ import annotations
+
 import json
 import os
 import time
 import random
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -32,19 +33,28 @@ from sentence_transformers import SentenceTransformer, InputExample, losses
 from torch.utils.data import DataLoader
 
 from config.paths import get_project_paths
+from .common import (
+    get_runtime_device,
+    get_training_output_dir,
+    load_annotations_from_pg,
+    load_deepseek_records,
+    load_occupation_dict_df,
+    resolve_base_model_path,
+    resolve_model_dir,
+    safe_empty_cuda_cache,
+)
 
 _project = get_project_paths()
 BASE_DIR = str(_project.project_root)
-ANNOTATION_FILE = os.path.join(BASE_DIR, "data", "project-4-at-2026-05-27-01-51-7cceb9ba.json")
-DEEPSEEK_FILE = os.path.join(BASE_DIR, "output", "deepseek_relabel", "deepseek_relabel_raw.jsonl")
-DICT_FILE = os.path.join(BASE_DIR, "data", "中国职业大典.xlsx")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output", "rag_round2_training")
-BASE_MODEL_PATH = str(_project.bge_model_path)
+OUTPUT_DIR = str(get_training_output_dir())
+BASE_MODEL_PATH = resolve_base_model_path()
 OUTPUT_MODEL_PATH = os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned-v4")
 
 
 @dataclass
 class Config:
+    """v4 训练与负样本筛选配置。"""
+
     batch_size: int = 32
     epochs: int = 3
     learning_rate: float = 2e-5
@@ -56,36 +66,50 @@ class Config:
     neg_semantic_rank_min: int = 30   # DS分歧+语义排名>=此值 → 负样本
 
 
-def parse_choice(annotation):
+def parse_choice(annotation: dict[str, Any]) -> str | None:
+    """从单条标注中提取规范化后的候选选择。"""
     for r in annotation.get("result", []):
         if r["from_name"] == "best_candidate_choice":
             choices = r["value"].get("choices", [])
-            if not choices: return None
+            if not choices:
+                return None
             raw = choices[0]
-            if len(raw) >= 2 and raw[-1] in "ABCDE": return raw[-1]
-            if "不" in raw: return "NONE"
+            if len(raw) >= 2 and raw[-1] in "ABCDE":
+                return raw[-1]
+            if "不" in raw:
+                return "NONE"
     return None
 
 
-def load_dict():
-    df = pd.read_excel(DICT_FILE, engine="openpyxl")
-    df.fillna("", inplace=True)
-    c2text, c2title = {}, {}
+def load_dict() -> tuple[dict[str, str], dict[str, str]]:
+    """加载职业大典并返回文本与标题映射。"""
+    df = load_occupation_dict_df()
+    c2text: dict[str, str] = {}
+    c2title: dict[str, str] = {}
     for _, row in df.iterrows():
         code = str(row["code"]).strip()
         title = str(row["title"]).strip()
         desc = str(row.get("desc", ""))
         tasks = str(row.get("tasks", ""))
-        if not code or not title: continue
+        if not code or not title:
+            continue
         c2title[code] = title
         parts = [title]
-        if desc and desc != "nan": parts.append(f"定义：{desc}")
-        if tasks and tasks != "nan": parts.append(f"任务：{tasks}")
+        if desc and desc != "nan":
+            parts.append(f"定义：{desc}")
+        if tasks and tasks != "nan":
+            parts.append(f"任务：{tasks}")
         c2text[code] = "。".join(parts)
     return c2text, c2title
 
 
-def compute_semantic_rank(anchor, target_code, occ_codes, occ_emb, model):
+def compute_semantic_rank(
+    anchor: str,
+    target_code: str,
+    occ_codes: list[str],
+    occ_emb: torch.Tensor,
+    model: SentenceTransformer,
+) -> int | None:
     """计算 target_code 在全部职业中的语义排名。"""
     if target_code not in occ_codes:
         return None
@@ -98,7 +122,8 @@ def compute_semantic_rank(anchor, target_code, occ_codes, occ_emb, model):
         return sorted_idx.index(target_idx) + 1
 
 
-def main():
+def main() -> None:
+    """执行 v4 中等方案训练、评估与负样本验证。"""
     config = Config()
     print("=" * 70)
     print("RAG Training v4: Medium Scheme (DS agree/disagree + semantic)")
@@ -109,14 +134,8 @@ def main():
 
     # ── Load ──
     print("\n[1] Loading data...")
-    with open(ANNOTATION_FILE, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-    ds_records = {}
-    with open(DEEPSEEK_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                r = json.loads(line)
-                ds_records[r["task_id"]] = r
+    raw_data = load_annotations_from_pg()
+    ds_records = load_deepseek_records()
     c2text, c2title = load_dict()
     occ_codes = sorted(c2text.keys())
     occ_texts = [c2text[c] for c in occ_codes]
@@ -124,7 +143,7 @@ def main():
 
     # ── Pre-encode occupations ──
     print("\n[2] Encoding occupations...")
-    model = SentenceTransformer(BASE_MODEL_PATH, device="cuda")
+    model = SentenceTransformer(BASE_MODEL_PATH, device=get_runtime_device())
     model.max_seq_length = config.max_seq_length
     with torch.no_grad():
         occ_emb = model.encode(occ_texts, batch_size=64, normalize_embeddings=True,
@@ -132,7 +151,9 @@ def main():
 
     # ── Build positive & negative pairs ──
     print("\n[3] Computing semantic ranks & building pairs...")
-    positive_pairs, negative_pairs, test_pairs = [], [], []
+    positive_pairs: list[dict[str, Any]] = []
+    negative_pairs: list[dict[str, Any]] = []
+    test_pairs: list[dict[str, Any]] = []
     n_skipped_none = n_skipped_no_ds = n_mid_rank = 0
     sem_ranks_pos, sem_ranks_neg, sem_ranks_mid = [], [], []
 
@@ -221,10 +242,10 @@ def main():
     # ── Train ──
     print(f"\n[5] Training...")
     train_examples = [InputExample(texts=[p["anchor"], p["positive"]]) for p in train_pos]
-    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    device_str = get_runtime_device()
 
     del model  # release base model
-    torch.cuda.empty_cache()
+    safe_empty_cuda_cache()
     model = SentenceTransformer(BASE_MODEL_PATH, device=device_str)
     model.max_seq_length = config.max_seq_length
 
@@ -314,8 +335,8 @@ def main():
     # ── Compare v1 ──
     print(f"\n[8] Comparison with v1...")
     del model
-    torch.cuda.empty_cache()
-    v1_path = os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned")
+    safe_empty_cuda_cache()
+    v1_path = resolve_model_dir("bge-large-round2-finetuned")
     v1 = SentenceTransformer(v1_path, device=device_str)
     v1.max_seq_length = 256
     v1_topk = {1: 0, 3: 0, 5: 0}

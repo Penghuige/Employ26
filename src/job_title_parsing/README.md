@@ -31,7 +31,7 @@
 
 ## 2. 数据格式说明
 
-### 2.1 职业大典数据（DuckDB 主，CSV 辅）
+### 2.1 职业大典数据（PostgreSQL 主）
 至少包含字段：
 - `code`
 - `title`
@@ -45,7 +45,7 @@
 - `小类`
 - `细类`
 
-### 2.2 招聘岗位数据（DuckDB 主，CSV 辅）
+### 2.2 招聘岗位数据（PostgreSQL 主）
 至少包含字段：
 - `岗位名称`
 - `岗位描述`
@@ -69,19 +69,17 @@ pip install -r requirements.txt
 本模块依赖项目现有依赖，核心只需要：
 - `pandas`
 - `jieba`
-- `duckdb`（若需要保存到 DuckDB）
+- `sqlalchemy` / `psycopg`（读取 PostgreSQL 时使用）
 
 ---
 
-## 4. 运行示例（DuckDB 默认）
+## 4. 运行示例（PostgreSQL 表名配置）
 
 ### 4.0 数据库配置统一位置
 
-本模块默认的 DuckDB 路径、线程数、输入输出表名统一放在：`config/database.yaml`
+本模块默认的 PostgreSQL 表名统一放在：`config/database.yaml`
 
 当前包含：
-- `database.duckdb_path`
-- `database.duckdb_threads`
 - `job_title_parsing.catalog_table`
 - `job_title_parsing.catalog_preprocessed_table`
 - `job_title_parsing.jobs_table`
@@ -89,44 +87,41 @@ pip install -r requirements.txt
 
 如果你不传 CLI 参数，默认就读取这里的配置。
 
-### 4.1 预处理职业大典（默认从 DuckDB 读取）
+### 4.1 预处理职业大典
 
 ```bash
 python -m src.job_title_parsing.cli preprocess-catalog
 ```
 
-默认等价于：
-- 输入库：`output/recruit.duckdb`
-- 输入表：`recruit.main.chinese_occupational_dictionary_joined`
-- 输出表：`recruit.main.chinese_occupational_dictionary_joined_preprocessed`
+当前配置中的推荐表：
+- 输入表：`public.occ_dict_detailed`
+- 输出表：`public.occ_dict_pro`
 
 显式指定示例：
 
 ```bash
 python -m src.job_title_parsing.cli preprocess-catalog \
-  --catalog-duckdb output/recruit.duckdb \
-  --catalog-table recruit.main.chinese_occupational_dictionary_joined \
-  --output-duckdb output/recruit.duckdb \
-  --output-table recruit.main.chinese_occupational_dictionary_joined_preprocessed
+  --catalog-table public.occ_dict_detailed \
+  --output-table public.occ_dict_pro
 ```
 
-### 4.2 批量匹配岗位（默认读写 DuckDB）
+### 4.2 批量匹配岗位
 
 ```bash
-python -m src.job_title_parsing.cli match --jobs-table recruit.main.xxxx__sample --output-table recruit.main.job_match_results --job-title-col 岗位名称 --job-desc-col 岗位描述 --job-id-col job_id --top-k 5 --debug
+python -m src.job_title_parsing.cli match --jobs-table '"Liepin".sample,"51job".sample,"Zhilian".sample' --output-table public.job_match_results --job-title-col 岗位名称 --job-desc-col 岗位描述 --job-id-col job_id --top-k 5 --debug
 ```
 
 说明：
-- 职业大典默认读取：`recruit.main.chinese_occupational_dictionary_joined`
-- 岗位默认读取：`recruit.main.jobs_sample`（建议你显式传 `--jobs-table`）
-- 匹配结果默认写入：`recruit.main.job_match_results`
+- 职业大典默认读取：`public.occ_dict_detailed`
+- 岗位默认读取：`"Liepin".sample`、`"51job".sample`、`"Zhilian".sample`
+- 匹配结果默认写入：`public.job_match_results`
 - 结果中会新增：`platform_terms`、`domain_terms`、`function_terms`、`object_terms`、`conflict_terms`
 
-### 4.3 评估结果（默认从 DuckDB 读取）
+### 4.3 评估结果
 
 ```bash
 python -m src.job_title_parsing.cli evaluate \
-  --result-table recruit.main.job_match_results
+  --result-table public.job_match_results
 ```
 
 如需 CSV 临时流程（仅小体量数据），再使用 `--catalog-csv` / `--jobs-csv` / `--result-csv`。
@@ -142,8 +137,8 @@ python -m src.job_title_parsing.cli evaluate \
 - 拆分 `tasks`
 - 构造 `task_list`、`task_text_joined`、`hierarchy_text`
 - 构造 `retrieval_title_text` / `retrieval_desc_text` / `retrieval_task_text`
-- 默认 DuckDB 路径和表名读取 `config/database.yaml`
-- 支持保存到 DuckDB
+- 默认表名读取 `config/database.yaml`
+- 当前配置只写 PostgreSQL 真实表名
 
 ### `alias_builder.py`
 职业别名构建：

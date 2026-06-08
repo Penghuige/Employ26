@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""分歧深度分析：挖掘标注数据中的错误模式。
+"""
+@ PengHui 2026-06-07
+分歧深度分析：挖掘标注数据中的错误模式。
 
 按标注分歧来划分正负样本，从以下维度寻找判别信号:
     1. 标注员间分歧程度与语义相似度的关联
@@ -15,43 +17,62 @@
     BGE 模型路径通过 config/paths.py 或环境变量 EMPLOYDATA_BGE_MODEL_PATH 配置。
 """
 
+from __future__ import annotations
+
 import json
 import os
-import sys
 from collections import Counter, defaultdict
-from pathlib import Path
-from typing import Dict, List
+from typing import Any, Optional
 
 import numpy as np
-import pandas as pd
 import torch
 from sentence_transformers import SentenceTransformer
 
 from config.paths import get_project_paths
+from .common import (
+    get_penghui_output_dir,
+    get_runtime_device,
+    load_annotations_from_pg,
+    load_deepseek_records,
+    load_occupation_dict_df,
+    resolve_base_model_path,
+)
 
 _project = get_project_paths()
 BASE_DIR = str(_project.project_root)
-ANNOTATION_FILE = os.path.join(BASE_DIR, "data", "project-4-at-2026-05-27-01-51-7cceb9ba.json")
-DEEPSEEK_FILE = os.path.join(BASE_DIR, "output", "deepseek_relabel", "deepseek_relabel_raw.jsonl")
-DICT_FILE = os.path.join(BASE_DIR, "data", "中国职业大典.xlsx")
-OUTPUT_FILE = os.path.join(BASE_DIR, "output", "disagreement_analysis.txt")
-MODEL_PATH = str(_project.bge_model_path)
+OUTPUT_FILE = os.path.join(get_penghui_output_dir(), "disagreement_analysis.txt")
+MODEL_PATH = resolve_base_model_path()
 
-# ── helpers ──
-def parse_choice(annotation):
+
+def parse_choice(annotation: dict[str, Any]) -> Optional[str]:
+    """从单条标注记录中提取标准化选择结果。
+
+    Args:
+        annotation: Label Studio 的单条 annotation 结构。
+
+    Returns:
+        规范化后的 `A-E` / `NONE`，若无有效选择则返回 `None`。
+    """
     for r in annotation.get("result", []):
         if r["from_name"] == "best_candidate_choice":
             choices = r["value"].get("choices", [])
-            if not choices: return None
+            if not choices:
+                return None
             raw = choices[0]
-            if len(raw) >= 2 and raw[-1] in "ABCDE": return raw[-1]
-            if "不" in raw: return "NONE"
+            if len(raw) >= 2 and raw[-1] in "ABCDE":
+                return raw[-1]
+            if "不" in raw:
+                return "NONE"
     return None
 
-def load_dict():
-    df = pd.read_excel(DICT_FILE, engine="openpyxl")
-    df.fillna("", inplace=True)
-    c2text, c2title, c2major, c2subclass = {}, {}, {}, {}
+
+def load_dict() -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+    """加载职业大典并构建分析所需的多种映射。"""
+    df = load_occupation_dict_df()
+    c2text: dict[str, str] = {}
+    c2title: dict[str, str] = {}
+    c2major: dict[str, str] = {}
+    c2subclass: dict[str, str] = {}
     for _, row in df.iterrows():
         code = str(row["code"]).strip()
         title = str(row["title"]).strip()
@@ -59,51 +80,75 @@ def load_dict():
         tasks = str(row.get("tasks", "")).strip()
         major = str(row.get("大类", "")).strip()
         subclass = "-".join(code.split("-")[:3]) if code else ""
-        if not code or not title: continue
+        if not code or not title:
+            continue
         c2title[code] = title
         c2major[code] = major
         c2subclass[code] = subclass
         parts = [title]
-        if desc and desc.lower() != "nan": parts.append(f"定义：{desc}")
-        if tasks and tasks.lower() != "nan": parts.append(f"任务：{tasks}")
+        if desc and desc.lower() != "nan":
+            parts.append(f"定义：{desc}")
+        if tasks and tasks.lower() != "nan":
+            parts.append(f"任务：{tasks}")
         c2text[code] = "。".join(parts)
     return c2text, c2title, c2major, c2subclass
 
-def hierarchy_distance(code_a, code_b, c2subclass):
-    """计算两个职业代码的层级距离。0=同细类, 1=同小类, 2=同中类, 3=同大类, 4=完全不同"""
-    if not code_a or not code_b: return 4
-    if code_a == code_b: return 0
+
+def hierarchy_distance(
+    code_a: Optional[str],
+    code_b: Optional[str],
+    c2subclass: dict[str, str],
+) -> int:
+    """计算两个职业代码的层级距离。
+
+    Args:
+        code_a: 职业代码 A。
+        code_b: 职业代码 B。
+        c2subclass: 代码到小类层级编码的映射。
+
+    Returns:
+        0 表示同细类，1 表示同小类，2 表示同中类，3 表示同大类，4 表示完全不同。
+    """
+    if not code_a or not code_b:
+        return 4
+    if code_a == code_b:
+        return 0
     sa = c2subclass.get(code_a, "")
     sb = c2subclass.get(code_b, "")
-    if sa == sb: return 1
-    if sa[:2] == sb[:2]: return 2
-    if sa[:1] == sb[:1]: return 3
+    if sa == sb:
+        return 1
+    if sa[:2] == sb[:2]:
+        return 2
+    if sa[:1] == sb[:1]:
+        return 3
     return 4
 
-def main():
+
+def main() -> None:
+    """执行人类与 DeepSeek 分歧样本的深度误差分析。"""
     print("Loading...")
-    with open(ANNOTATION_FILE, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-    ds_records = {}
-    with open(DEEPSEEK_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                r = json.loads(line)
-                ds_records[r["task_id"]] = r
+    raw_data = load_annotations_from_pg()
+    ds_records = load_deepseek_records()
     c2text, c2title, c2major, c2subclass = load_dict()
 
-    model = SentenceTransformer(MODEL_PATH, device="cuda")
+    device = get_runtime_device()
+    model = SentenceTransformer(MODEL_PATH, device=device)
     model.max_seq_length = 256
 
-    # Pre-encode all occupations
+    # 预编码全部职业文本，后续每条任务只需要编码 anchor。
     occ_codes = sorted(c2text.keys())
     occ_texts = [c2text[c] for c in occ_codes]
     with torch.no_grad():
-        occ_emb = model.encode(occ_texts, batch_size=64, normalize_embeddings=True,
-                               show_progress_bar=True, convert_to_tensor=True)
+        occ_emb = model.encode(
+            occ_texts,
+            batch_size=64,
+            normalize_embeddings=True,
+            show_progress_bar=True,
+            convert_to_tensor=True,
+        )
 
-    # Parse all tasks
-    records = []
+    # 逐任务计算分歧分析特征。
+    records: list[dict[str, Any]] = []
     for item in raw_data:
         tid = item["id"]
         data = item["data"]
@@ -111,19 +156,30 @@ def main():
         n_ann = len(anns)
         jt = str(data.get("job_title", "")).strip()
         jr = str(data.get("job_requirements_clean", "")).strip()
-        if not jr: continue
+        if not jr:
+            continue
         anchor = f"{jt} {jr}"
 
         choices = [parse_choice(a) for a in anns]
         valid = [c for c in choices if c and c != "NONE"]
-        if not valid: continue
+        if not valid:
+            continue
 
         if n_ann >= 2:
             counter = Counter(valid)
             hum_choice, cnt = counter.most_common(1)[0]
             has_majority = cnt > len(anns) / 2
-            pairwise = sum(1 for i in range(len(valid)) for j in range(i+1,len(valid)) if valid[i]==valid[j])
-            pairwise = pairwise / (len(valid)*(len(valid)-1)//2) if len(valid)>1 else 1.0
+            pairwise = sum(
+                1
+                for i in range(len(valid))
+                for j in range(i + 1, len(valid))
+                if valid[i] == valid[j]
+            )
+            pairwise = (
+                pairwise / (len(valid) * (len(valid) - 1) // 2)
+                if len(valid) > 1
+                else 1.0
+            )
         else:
             hum_choice = valid[0]
             has_majority = False
@@ -135,40 +191,59 @@ def main():
         ds = ds_records.get(tid)
         ds_choice = ds["deepseek_choice"] if ds else None
         ds_conf = ds.get("deepseek_confidence") if ds else None
-        ds_code = str(data.get(f"candidate_{ds_choice.lower()}_code", "")) if ds and ds_choice and ds_choice != "NONE" else None
+        ds_code = (
+            str(data.get(f"candidate_{ds_choice.lower()}_code", ""))
+            if ds and ds_choice and ds_choice != "NONE"
+            else None
+        )
         ds_title = c2title.get(ds_code, "") if ds_code else ""
 
-        # Compute semantic rank
+        # 语义排名用于衡量“人类所选职业”在全量检索中的相对位置。
         sem_rank = None
+        sorted_idx: list[int] | None = None
         if hum_code in occ_codes:
             with torch.no_grad():
-                anc_emb = model.encode([anchor], batch_size=1, normalize_embeddings=True,
-                                       show_progress_bar=False, convert_to_tensor=True)
+                anc_emb = model.encode(
+                    [anchor],
+                    batch_size=1,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                    convert_to_tensor=True,
+                )
                 sims = torch.mm(anc_emb, occ_emb.T).squeeze(0)
                 sorted_idx = torch.argsort(sims, descending=True).cpu().tolist()
                 target_idx = occ_codes.index(hum_code)
                 sem_rank = sorted_idx.index(target_idx) + 1
 
-        # DS's semantic rank for human's choice
+        # 对比 DeepSeek 所选职业的语义排名，帮助判断谁更接近检索模型。
         ds_sem_rank = None
         if ds_code and ds_code in occ_codes:
             target_idx = occ_codes.index(ds_code)
-            if 'sorted_idx' not in dir():
+            if sorted_idx is None:
                 with torch.no_grad():
-                    anc_emb = model.encode([anchor], batch_size=1, normalize_embeddings=True,
-                                           show_progress_bar=False, convert_to_tensor=True)
+                    anc_emb = model.encode(
+                        [anchor],
+                        batch_size=1,
+                        normalize_embeddings=True,
+                        show_progress_bar=False,
+                        convert_to_tensor=True,
+                    )
                     sims = torch.mm(anc_emb, occ_emb.T).squeeze(0)
                     sorted_idx = torch.argsort(sims, descending=True).cpu().tolist()
             ds_sem_rank = sorted_idx.index(target_idx) + 1
 
-        # Hierarchy distance between human and DS choice
+        # 层级距离体现“分歧”是细粒度误差还是跨大类误差。
         hdist = hierarchy_distance(hum_code, ds_code, c2subclass) if ds_code else None
 
-        # RAG top1 info
+        # 记录人类是否直接选择了 RAG Top1 候选。
         hum_picked_top1 = False
-        for cand, src in [("a","candidate_a_source"),("b","candidate_b_source"),
-                          ("c","candidate_c_source"),("d","candidate_d_source"),
-                          ("e","candidate_e_source")]:
+        for cand, src in [
+            ("a", "candidate_a_source"),
+            ("b", "candidate_b_source"),
+            ("c", "candidate_c_source"),
+            ("d", "candidate_d_source"),
+            ("e", "candidate_e_source"),
+        ]:
             if "top1" in str(data.get(src, "")) and hum_choice == cand.upper():
                 hum_picked_top1 = True
 
@@ -184,12 +259,14 @@ def main():
             "hum_picked_top1": hum_picked_top1,
         })
 
-    # ── Analysis ──
-    def w(s):
+    def w(text: str) -> None:
+        """同时写入报告文件并尝试打印到控制台。"""
         with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
-            f.write(s + "\n")
-        try: print(s)
-        except: pass
+            f.write(text + "\n")
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            pass
 
     if os.path.exists(OUTPUT_FILE):
         os.remove(OUTPUT_FILE)

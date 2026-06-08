@@ -22,7 +22,7 @@ class CatalogPreprocessor:
 
     DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / _DATABASE_SETTINGS.get("duckdb_path", "output/recruit.duckdb")
     DEFAULT_TABLE_NAME = _JOB_TITLE_PARSING_SETTINGS.get(
-        "catalog_table", "recruit.main.chinese_occupational_dictionary_joined"
+        "catalog_table", "public.occ_dict_detailed"
     )
 
     REQUIRED_COLUMNS = [

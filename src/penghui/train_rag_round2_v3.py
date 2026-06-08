@@ -17,14 +17,15 @@
     2. BGE 模型路径通过 config/paths.py 或环境变量 EMPLOYDATA_BGE_MODEL_PATH 配置
 """
 
+from __future__ import annotations
+
 import json
 import os
 import time
 import random
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 import torch
@@ -32,21 +33,29 @@ from sentence_transformers import SentenceTransformer, InputExample, losses
 from torch.utils.data import DataLoader
 
 from config.paths import get_project_paths
+from .common import (
+    get_runtime_device,
+    get_training_output_dir,
+    load_annotations_from_pg,
+    load_deepseek_records,
+    load_occupation_dict_df,
+    resolve_base_model_path,
+    resolve_model_dir,
+)
 
 _project = get_project_paths()
 BASE_DIR = str(_project.project_root)
-ANNOTATION_FILE = os.path.join(BASE_DIR, "data", "project-4-at-2026-05-27-01-51-7cceb9ba.json")
-DEEPSEEK_FILE = os.path.join(BASE_DIR, "output", "deepseek_relabel", "deepseek_relabel_raw.jsonl")
-DICT_FILE = os.path.join(BASE_DIR, "data", "中国职业大典.xlsx")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output", "rag_round2_training")
+OUTPUT_DIR = str(get_training_output_dir())
 
-BASE_MODEL_PATH = str(_project.bge_model_path)
+BASE_MODEL_PATH = resolve_base_model_path()
 OUTPUT_MODEL_PATH = os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned-v3")
 
 
 # ── 配置 ────────────────────────────────────────
 @dataclass
 class Config:
+    """v3 训练方案配置。"""
+
     batch_size: int = 32
     epochs: int = 3
     learning_rate: float = 2e-5
@@ -56,7 +65,8 @@ class Config:
     test_ratio: float = 0.15  # Silver 中留出多少做测试
 
 
-def parse_human_choice(annotation: Dict) -> Optional[str]:
+def parse_human_choice(annotation: dict[str, Any]) -> str | None:
+    """从人工标注中提取规范化候选选择。"""
     for r in annotation.get("result", []):
         if r["from_name"] == "best_candidate_choice":
             choices = r["value"].get("choices", [])
@@ -69,10 +79,10 @@ def parse_human_choice(annotation: Dict) -> Optional[str]:
     return None
 
 
-def load_occupation_dict(dict_path: str) -> Dict[str, str]:
-    df = pd.read_excel(dict_path, engine="openpyxl")
-    df.fillna("", inplace=True)
-    code_to_text = {}
+def load_occupation_dict(dict_path: str) -> dict[str, str]:
+    """加载职业大典并构造训练用的正样本文本。"""
+    df = load_occupation_dict_df()
+    code_to_text: dict[str, str] = {}
     for _, row in df.iterrows():
         code = str(row["code"]).strip()
         title = str(row["title"]).strip()
@@ -86,8 +96,15 @@ def load_occupation_dict(dict_path: str) -> Dict[str, str]:
     return code_to_text
 
 
-def build_pair(task_id, anchor, code, code_to_text, n_annotators, label_type):
-    """Build a training pair if code is valid."""
+def build_pair(
+    task_id: int,
+    anchor: str,
+    code: str,
+    code_to_text: dict[str, str],
+    n_annotators: int,
+    label_type: str,
+) -> dict[str, Any] | None:
+    """构建单条训练样本对。"""
     if not code or code not in code_to_text:
         return None
     return {
@@ -100,7 +117,8 @@ def build_pair(task_id, anchor, code, code_to_text, n_annotators, label_type):
     }
 
 
-def main():
+def main() -> None:
+    """执行 v3 Silver/Gold 方案训练与评估。"""
     config = Config()
     print("=" * 70)
     print("RAG Training v3: Silver/Gold Label Set")
@@ -110,23 +128,17 @@ def main():
 
     # ── 加载数据 ──
     print("\n[Step 1] Loading data...")
-    with open(ANNOTATION_FILE, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
+    raw_data = load_annotations_from_pg()
     print(f"  Human annotations: {len(raw_data)} tasks")
 
-    ds_records = {}
-    with open(DEEPSEEK_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                r = json.loads(line)
-                ds_records[r["task_id"]] = r
+    ds_records = load_deepseek_records()
     print(f"  Deepseek records: {len(ds_records)}")
 
-    code_to_text = load_occupation_dict(DICT_FILE)
+    code_to_text = load_occupation_dict("")
     print(f"  Occupation dict: {len(code_to_text)} entries")
 
     # ── 按 task_id 索引人工标注 ──
-    human_data = {}
+    human_data: dict[int, dict[str, Any]] = {}
     for item in raw_data:
         tid = item["id"]
         choices = []
@@ -140,8 +152,8 @@ def main():
         }
 
     # ── 分类：Gold / Silver / Excluded ──
-    gold_pairs = []
-    silver_pairs = []
+    gold_pairs: list[dict[str, Any]] = []
+    silver_pairs: list[dict[str, Any]] = []
     excluded_disagree = 0
     excluded_none = 0
     excluded_no_ds = 0
@@ -223,7 +235,7 @@ def main():
     train_ids = {p["task_id"] for p in train_pairs}
 
     # 测试集: 排除 train_ids 后的所有有效数据
-    test_pairs = []
+    test_pairs: list[dict[str, Any]] = []
     for tid, h in human_data.items():
         if tid in train_ids:
             continue
@@ -267,7 +279,7 @@ def main():
 
     # ── 训练 ──
     print(f"\n[Step 3] Training...")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_runtime_device()
     model = SentenceTransformer(BASE_MODEL_PATH, device=device)
     model.max_seq_length = config.max_seq_length
     print(f"  Device: {device}, Dim: {model.get_sentence_embedding_dimension()}")
@@ -337,7 +349,7 @@ def main():
     print(f"\n  [Comparison with v1 (all data)]")
     del model
     torch.cuda.empty_cache()
-    v1_path = os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned")
+    v1_path = resolve_model_dir("bge-large-round2-finetuned")
     v1_model = SentenceTransformer(v1_path, device=device)
     v1_model.max_seq_length = 256
     v1_topk = {1: 0, 3: 0, 5: 0}

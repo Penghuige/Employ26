@@ -44,30 +44,23 @@ def _split_table_names(value: object) -> List[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
-def qualify_table_name(table_name: str, catalog: str = "recruit", schema: str = "main") -> str:
-    """补齐 DuckDB 表名的 catalog / schema 前缀。
+def qualify_table_name(table_name: str) -> str:
+    """校验并返回配置中的 PostgreSQL 表名。
 
     参数:
-        table_name: 原始表名，支持一段式、两段式或三段式。
-        catalog: 默认 catalog 名称。
-        schema: 默认 schema 名称。
+        table_name: 原始表名，推荐使用 schema.table。
 
     返回:
-        str: 统一后的全限定表名。
+        str: 去除首尾空白后的表名。
 
     说明:
-        - 一段式: `table` -> `catalog.schema.table`
-        - 两段式: `schema.table` -> `catalog.schema.table`
-        - 三段式: 原样返回
+        这里不再自动补齐 `recruit.main` 前缀，避免把封存的 DuckDB 表名
+        误当成当前 PostgreSQL 表引用。
     """
     normalized = str(table_name).strip()
     if not normalized:
         raise ValueError("table_name 不能为空")
-    if normalized.count(".") >= 2:
-        return normalized
-    if normalized.count(".") == 1:
-        return f"{catalog}.{normalized}"
-    return f"{catalog}.{schema}.{normalized}"
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -237,20 +230,20 @@ def load_skill_extraction_config(
         catalog_table=qualify_table_name(
             parsing_settings.get(
                 "catalog_table",
-                "recruit.main.chinese_occupational_dictionary_joined",
+                "public.occ_dict_detailed",
             )
         ),
         catalog_preprocessed_table=qualify_table_name(
             parsing_settings.get(
                 "catalog_preprocessed_table",
-                "recruit.main.chinese_occupational_dictionary_joined_preprocessed",
+                "public.occ_dict_pro",
             )
         ),
         jobs_tables=jobs_tables,
         requirement_match_table=qualify_table_name(
             skill_settings.get(
                 "requirement_match_table",
-                "recruit.main.skill_extraction_requirement_matches",
+                "public.skill_extraction_requirement_matches",
             )
         ),
         output_dir=output_dir,

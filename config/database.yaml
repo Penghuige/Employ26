@@ -1,41 +1,102 @@
-# 项目数据库与模型配置
-# 数据库统一使用 PostgreSQL。除报告类文本外，所有源数据和中间处理结果均存入 PG。
+# 项目数据库、表引用与模型路径配置
 #
-# 环境变量覆盖（优先级高于本文件）:
-#   EMPLOYDATA_PG_HOST     — PostgreSQL 主机地址
-#   EMPLOYDATA_PG_PORT     — PostgreSQL 端口
-#   EMPLOYDATA_PG_DBNAME   — 数据库名
-#   EMPLOYDATA_PG_USER     — 用户名
-#   EMPLOYDATA_PG_PASSWORD — 密码
-#   EMPLOYDATA_BGE_MODEL_PATH — BGE embedding 模型路径
-#   EMPLOYDATA_QWEN_MODEL_PATH — Qwen LLM 模型路径
-#   EMPLOYDATA_BERT_MODEL_PATH — BERT 模型路径
+# 本文件是默认配置源；运行时优先级为：
+#   显式参数 > EMPLOYDATA_* 环境变量 > 本文件 > 代码内兜底默认值
+#
+# 当前正式数据库是 PostgreSQL `Employ26`。
+# 真实 schema / 表 / 字段请以根目录 `Employ26-database.md` 为准。
+# 不要把历史 DuckDB 表名写入本文件；如果 PostgreSQL 没有对应表，宁可不配置。
 
 database:
-  # ── PostgreSQL 连接参数 ──
+  # PostgreSQL 连接参数
   host: localhost
   port: 5432
-  dbname: employ26
+  dbname: Employ26
   user: postgres
   password: ""
-  # schema 前缀（所有数据表统一放在此 schema 下）
-  schema: recruit
+  schema: public
 
+  # Employ26 当前可用业务 schema。schema 名包含大小写时，SQL 中注意双引号。
+  schemas:
+    - 51job
+    - Liepin
+    - Zhilian
+    - annotations
+    - public
+
+tables:
+  # 当前 PostgreSQL 推荐引用入口。
+  annotations:
+    tasks_v2: annotations.label_studio_tasks_v2
+    annotations_v2: annotations.label_studio_annotations_v2
+    legacy_annotations: annotations.label_studio_annotations
+    deepseek_relabel_raw: annotations.deepseek_relabel_raw
+    task_annotation_view: annotations.v_label_studio_task_annotations_v2
+
+  recruitment_sources:
+    51job_raw: '"51job".raw_data'
+    51job_cleaned: '"51job".cleaned_data'
+    51job_sample: '"51job".sample'
+    Liepin_raw: '"Liepin".raw_data'
+    Liepin_cleaned: '"Liepin".cleaned_data'
+    Liepin_sample: '"Liepin".sample'
+    Zhilian_raw: '"Zhilian".raw_data'
+    Zhilian_cleaned: '"Zhilian".cleaned_data'
+    Zhilian_sample: '"Zhilian".sample'
+
+  occupation_dictionary:
+    basic: public.occ_dict
+    detailed: public.occ_dict_detailed
+    professional: public.occ_dict_pro
+    classification: public.occupational_classification_dictionary
+
+  processing_results:
+    hard_skill_match_details_dev: public.hard_skill_match_details_dev
+    hard_skill_match_results_dev: public.hard_skill_match_results_dev
+    hard_skill_match_summary_dev: public.hard_skill_match_summary_dev
+    match_training_features: public.match_training_features
+    rag_match_results_v2: public.rag_match_results_v2
+    skill_extraction_requirement_matches: public.skill_extraction_requirement_matches
+    job_match_results: public.job_match_results
+    jd_raw: public.jd_raw
+
+# PostgreSQL 表引用。只允许写真实存在的 PG 表，不写封存的 DuckDB 表名。
 job_title_parsing:
-  catalog_table: recruit.main.chinese_occupational_dictionary_joined
-  catalog_preprocessed_table: recruit.main.chinese_occupational_dictionary_joined_preprocessed
-  jobs_table: gd_recruit_liepin_sample, gd_recruit_qcwy_sample, zhilian_guangdong_sample
-  match_result_table: recruit.main.job_match_results
+  catalog_table: public.occ_dict_detailed
+  catalog_preprocessed_table: public.occ_dict_pro
+  jobs_table:
+    - '"Liepin".sample'
+    - '"51job".sample'
+    - '"Zhilian".sample'
+  match_result_table: public.job_match_results
 
 skill_extraction:
-  requirement_match_table: recruit.main.skill_extraction_requirement_matches
+  requirement_match_table: public.skill_extraction_requirement_matches
+  llm_base_url: https://api.ofox.ai/v1
+  llm_env_file: .env.local
 
-raw_database: recruit.raw_data.lieping_raw_data, recruit.raw_data.qcwu_raw_data, recruit.raw_data.zhilian_raw_data
+raw_database:
+  - '"Liepin".raw_data'
+  - '"51job".raw_data'
+  - '"Zhilian".raw_data'
 
 model_paths:
-  llm: models/Qwen3-8B
-  bge: models/bge-base-zh-v1.5
-  bert: models/chinese-roberta-wwm-ext
+  # 常用默认模型
+  llm: D:/model/Qwen3-8B
+  bge: D:/model/bge-base-zh-v1.5
+  bert: D:/model/chinese-roberta-wwm-ext
 
-API_URL: https://api.ofox.ai/v1/chat/completions
-APi_KEY: sk-of-SaWCFPkLtxICvozTZLrMHpjHwMrxCwfNeKctuwZJilobzlyTZhEPfyhXzbXMaKwC
+  # D:/model 下已发现的本地模型清单
+  embedding:
+    bge_base_zh_finetuned: D:/model/bge-base-zh-finetuned
+    bge_base_zh_v1_5: D:/model/bge-base-zh-v1.5
+    bge_large_zh_v1_5: D:/model/bge-large-zh-v1.5
+    bge_m3: D:/model/bge-m3
+  bert_family:
+    chinese_roberta_wwm_ext: D:/model/chinese-roberta-wwm-ext
+  llm_family:
+    qwen3_8b: D:/model/Qwen3-8B
+    qwen3_6_27b: D:/model/Qwen3.6-27B
+    qwen3_6_27b_uncensored_balanced: D:/model/Qwen3.6-27B-Uncensored-Balanced
+    qwen3_6_27b_uncensored_balanced_q4_k_p: D:/model/Qwen3.6-27B-Uncensored-Balanced-Q4_K_P
+    qwen3_6_35b_a3b_fp8: D:/model/Qwen3.6-35B-A3B-FP8

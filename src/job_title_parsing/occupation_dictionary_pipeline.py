@@ -81,8 +81,14 @@ def load_occupation_dictionary_config() -> OccupationDictionaryConfig:
     db_settings = raw.get("database", {})
     parsing_settings = raw.get("job_title_parsing", {})
     occ_settings = raw.get("occupation_dictionary", {})
-    jobs_table_value = parsing_settings.get("jobs_table", "recruit.main.jobs_sample")
-    jobs_tables = [item.strip() for item in str(jobs_table_value).split(",") if item.strip()]
+    jobs_table_value = parsing_settings.get(
+        "jobs_table",
+        ['"Liepin".sample', '"51job".sample', '"Zhilian".sample'],
+    )
+    if isinstance(jobs_table_value, list):
+        jobs_tables = [str(item).strip() for item in jobs_table_value if str(item).strip()]
+    else:
+        jobs_tables = [item.strip() for item in str(jobs_table_value).split(",") if item.strip()]
 
     output_dir = PROJECT_ROOT / "output" / "occupation_dictionary"
     config = OccupationDictionaryConfig(

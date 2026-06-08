@@ -25,7 +25,7 @@ from tqdm.auto import tqdm as tqdm_auto
 
 # 运行方式：从项目根目录执行 `python -m src.bge.step_02_filter`，
 # 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
-from ..preprocessing.parse_desc import parse_desc_df
+from ..data_pipeline.description_parsing import parse_desc_df
 from ..rag.config import RAGConfig
 from ..rag.qc_utils import (
     batched_generate,

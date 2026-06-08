@@ -20,14 +20,15 @@ MultipleNegativesRankingLoss：
     3. BGE 模型路径通过 config/paths.py 或环境变量 EMPLOYDATA_BGE_MODEL_PATH 配置
 """
 
+from __future__ import annotations
+
 import json
 import os
 import time
 import random
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -36,14 +37,21 @@ from sentence_transformers import SentenceTransformer, InputExample, losses
 from torch.utils.data import DataLoader
 
 from config.paths import get_project_paths
+from .common import (
+    get_runtime_device,
+    get_training_output_dir,
+    load_annotations_from_pg,
+    load_deepseek_records,
+    load_occupation_dict_df,
+    resolve_base_model_path,
+    resolve_model_dir,
+    safe_empty_cuda_cache,
+)
 
 _project = get_project_paths()
 BASE_DIR = str(_project.project_root)
-ANNOTATION_FILE = os.path.join(BASE_DIR, "data", "project-4-at-2026-05-27-01-51-7cceb9ba.json")
-DEEPSEEK_FILE = os.path.join(BASE_DIR, "output", "deepseek_relabel", "deepseek_relabel_raw.jsonl")
-DICT_FILE = os.path.join(BASE_DIR, "data", "中国职业大典.xlsx")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output", "rag_round2_training")
-BASE_MODEL_PATH = str(_project.bge_model_path)
+OUTPUT_DIR = str(get_training_output_dir())
+BASE_MODEL_PATH = resolve_base_model_path()
 OUTPUT_MODEL_PATH = os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned-weighted")
 
 # ── 大类关键词 ──
@@ -65,6 +73,8 @@ MAJOR_CLASS_KEYWORDS = {
 
 @dataclass
 class Config:
+    """加权 oversampling 训练配置。"""
+
     batch_size: int = 32
     epochs: int = 3
     learning_rate: float = 2e-5
@@ -72,88 +82,116 @@ class Config:
     warmup_ratio: float = 0.1
     random_seed: int = 42
     # oversample multipliers
-    oversample: dict = None
-    def __post_init__(self):
+    oversample: dict[str, int] | None = None
+
+    def __post_init__(self) -> None:
+        """初始化每个质量层级对应的过采样倍数。"""
         self.oversample = {"S": 10, "A": 7, "B": 3, "C": 1, "D": 0}
 
 
-def parse_choice(ann):
+def parse_choice(ann: dict[str, Any]) -> str | None:
+    """从单条人工标注中提取规范化选择。"""
     for r in ann.get("result", []):
         if r["from_name"] == "best_candidate_choice":
             choices = r["value"].get("choices", [])
-            if not choices: return None
+            if not choices:
+                return None
             raw = choices[0]
-            if len(raw) >= 2 and raw[-1] in "ABCDE": return raw[-1]
-            if "不" in raw: return "NONE"
+            if len(raw) >= 2 and raw[-1] in "ABCDE":
+                return raw[-1]
+            if "不" in raw:
+                return "NONE"
     return None
 
-def load_dict():
-    df = pd.read_excel(DICT_FILE, engine="openpyxl"); df.fillna("", inplace=True)
-    c2text, c2major = {}, {}
+
+def load_dict() -> tuple[dict[str, str], dict[str, str]]:
+    """加载职业文本和职业大类映射。"""
+    df = load_occupation_dict_df()
+    c2text: dict[str, str] = {}
+    c2major: dict[str, str] = {}
     for _, row in df.iterrows():
-        code = str(row["code"]).strip(); title = str(row["title"]).strip()
-        if not code or not title: continue
+        code = str(row["code"]).strip()
+        title = str(row["title"]).strip()
+        if not code or not title:
+            continue
         parts = [title]
         for key, prefix in [("desc", "定义："), ("tasks", "任务：")]:
-            v = str(row.get(key, ""))
-            if v and v != "nan": parts.append(f"{prefix}{v}")
+            value = str(row.get(key, ""))
+            if value and value != "nan":
+                parts.append(f"{prefix}{value}")
         c2text[code] = "。".join(parts)
         c2major[code] = str(row.get("大类", "")).strip()
     return c2text, c2major
 
-def guess_major_class(job_title):
-    if not job_title: return None
-    scores = {}
+
+def guess_major_class(job_title: str) -> str | None:
+    """根据岗位名称关键词猜测职业大类。"""
+    if not job_title:
+        return None
+    scores: dict[str, int] = {}
     for m, info in MAJOR_CLASS_KEYWORDS.items():
-        s = sum(1 for kw in info if kw in job_title)
-        if s > 0: scores[m] = s
+        score = sum(1 for kw in info if kw in job_title)
+        if score > 0:
+            scores[m] = score
     return max(scores, key=scores.get) if scores else None
 
-def class_match(title_guess, occ_major):
-    if not title_guess or not occ_major: return 0.5
-    for m, info in MAJOR_CLASS_KEYWORDS.items():
-        if m == title_guess or info.get("label") == title_guess:
-            return 1.0 if occ_major == m else 0.0
+
+def class_match(title_guess: str | None, occ_major: str | None) -> float:
+    """判断岗位名称猜测的大类与职业大典大类是否匹配。"""
+    if not title_guess or not occ_major:
+        return 0.5
+    for major_class in MAJOR_CLASS_KEYWORDS:
+        if major_class == title_guess:
+            return 1.0 if occ_major == major_class else 0.0
     return 0.5
 
-def compute_tier(r):
-    """Reuse the multi-dimensional scoring from multidim_validation.py."""
-    score = 0
-    # 多标注一致性
-    if r["n_annotators"] >= 2 and r["has_majority"]:
-        score += 3 if r["pairwise"] >= 0.8 else (2 if r["pairwise"] >= 0.5 else 1)
-    elif r["n_annotators"] >= 2:
-        score += 1
-    # DS一致性
-    if r["ds_agrees"] is True:
-        score += 3 if (r["ds_conf"] and r["ds_conf"] >= 0.9) else 2
-    elif r["ds_agrees"] is False:
-        score -= 2
-    # 语义排名
-    if r["sem_rank"] is not None and r["sem_rank"] > 0:
-        if r["sem_rank"] <= 5: score += 3
-        elif r["sem_rank"] <= 20: score += 2
-        elif r["sem_rank"] <= 50: score += 1
-        else: score -= 1
-    # 大类匹配
-    if r["kw_match"] == 1.0: score += 2
-    elif r["kw_match"] == 0.0: score -= 1
-    # 标注员质量
-    if r["ann_quality"] >= 0.7: score += 1
-    elif r["ann_quality"] < 0.5: score -= 1
-    # NONE率
-    if r["none_rate"] > 0.3: score -= 1
-    # RAG Top1
-    if r["top1_pick"]: score += 1
 
-    if score >= 9: return "S"
-    elif score >= 6: return "A"
-    elif score >= 3: return "B"
-    elif score >= 0: return "C"
+def compute_tier(record: dict[str, Any]) -> str:
+    """复用多维信号规则，为样本打质量层级。"""
+    score = 0
+    if record["n_annotators"] >= 2 and record["has_majority"]:
+        score += 3 if record["pairwise"] >= 0.8 else (2 if record["pairwise"] >= 0.5 else 1)
+    elif record["n_annotators"] >= 2:
+        score += 1
+    if record["ds_agrees"] is True:
+        score += 3 if (record["ds_conf"] and record["ds_conf"] >= 0.9) else 2
+    elif record["ds_agrees"] is False:
+        score -= 2
+    if record["sem_rank"] is not None and record["sem_rank"] > 0:
+        if record["sem_rank"] <= 5:
+            score += 3
+        elif record["sem_rank"] <= 20:
+            score += 2
+        elif record["sem_rank"] <= 50:
+            score += 1
+        else:
+            score -= 1
+    if record["kw_match"] == 1.0:
+        score += 2
+    elif record["kw_match"] == 0.0:
+        score -= 1
+    if record["ann_quality"] >= 0.7:
+        score += 1
+    elif record["ann_quality"] < 0.5:
+        score -= 1
+    if record["none_rate"] > 0.3:
+        score -= 1
+    if record["top1_pick"]:
+        score += 1
+
+    if score >= 9:
+        return "S"
+    if score >= 6:
+        return "A"
+    if score >= 3:
+        return "B"
+    if score >= 0:
+        return "C"
     return "D"
 
 
-def main():
+def main() -> None:
+    """执行基于多维质量层级的加权微调方案。"""
     config = Config()
     print("=" * 60)
     print("方案A：置信加权训练 (Confidence-Weighted)")
@@ -163,12 +201,8 @@ def main():
 
     # ── Load ──
     print("\n[1] Loading...")
-    with open(ANNOTATION_FILE, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-    ds_records = {}
-    with open(DEEPSEEK_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip(): r = json.loads(line); ds_records[r["task_id"]] = r
+    raw_data = load_annotations_from_pg()
+    ds_records = load_deepseek_records()
     c2text, c2major = load_dict()
 
     # ── Compute annotator quality first ──
@@ -184,20 +218,22 @@ def main():
         for aid, c in valid:
             ann_stats[aid]["total"] += 1
             if c == majority: ann_stats[aid]["agree"] += 1
-    ann_quality = {aid: s["agree"]/s["total"] if s["total"]>0 else 0.5
-                   for aid, s in ann_stats.items()}
+    ann_quality = {
+        aid: stats["agree"] / stats["total"] if stats["total"] > 0 else 0.5
+        for aid, stats in ann_stats.items()
+    }
 
     # ── Load BGE for semantic rank ──
     print("\n[2] Encoding occupations for semantic ranking...")
     occ_codes = sorted(c2text.keys()); occ_texts = [c2text[c] for c in occ_codes]
-    model = SentenceTransformer(BASE_MODEL_PATH, device="cuda"); model.max_seq_length = 256
+    model = SentenceTransformer(BASE_MODEL_PATH, device=get_runtime_device()); model.max_seq_length = 256
     with torch.no_grad():
         occ_emb = model.encode(occ_texts, batch_size=64, normalize_embeddings=True,
                                show_progress_bar=True, convert_to_tensor=True)
 
     # ── Score each sample ──
     print("\n[3] Computing quality tiers...")
-    scored_pairs = []
+    scored_pairs: list[dict[str, Any]] = []
     for item in raw_data:
         tid = item["id"]; data = item["data"]; anns = item["annotations"]
         jt = str(data.get("job_title","")).strip()
@@ -291,11 +327,11 @@ def main():
         print(f"    {t}: {tier_train_counts[t]} unique -> {tier_train_counts[t]*config.oversample.get(t,0)} oversampled")
     print(f"  Test: {len(test_set)}")
 
-    del model; torch.cuda.empty_cache()
+    del model; safe_empty_cuda_cache()
 
     # ── Train ──
     print(f"\n[5] Training...")
-    model = SentenceTransformer(BASE_MODEL_PATH, device="cuda"); model.max_seq_length = 256
+    model = SentenceTransformer(BASE_MODEL_PATH, device=get_runtime_device()); model.max_seq_length = 256
     train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=config.batch_size)
     train_loss = losses.MultipleNegativesRankingLoss(model=model)
     warmup_steps = int(len(train_dataloader) * config.epochs * config.warmup_ratio)
@@ -347,9 +383,9 @@ def main():
 
     # ── Compare v1 ──
     print(f"\n[7] Comparing with v1...")
-    del model; torch.cuda.empty_cache()
-    v1 = SentenceTransformer(os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned"),
-                             device="cuda"); v1.max_seq_length = 256
+    del model; safe_empty_cuda_cache()
+    v1 = SentenceTransformer(resolve_model_dir("bge-large-round2-finetuned"),
+                             device=get_runtime_device()); v1.max_seq_length = 256
     v1tk = {1:0,3:0,5:0}; v1t = 0
     with torch.no_grad():
         v1occ = v1.encode(occ_texts, batch_size=64, normalize_embeddings=True,

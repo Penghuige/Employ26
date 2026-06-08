@@ -23,28 +23,33 @@
     BGE 模型路径通过 config/paths.py 或环境变量 EMPLOYDATA_BGE_MODEL_PATH 配置。
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
 from collections import Counter, defaultdict
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
-import pandas as pd
 import torch
 from sentence_transformers import SentenceTransformer
 
 from config.paths import get_project_paths
+from .common import (
+    get_penghui_output_dir,
+    get_runtime_device,
+    load_annotations_from_pg,
+    load_deepseek_records,
+    load_occupation_dict_df,
+    resolve_base_model_path,
+)
 
 _project = get_project_paths()
 BASE_DIR = str(_project.project_root)
-ANNOTATION_FILE = os.path.join(BASE_DIR, "data", "project-4-at-2026-05-27-01-51-7cceb9ba.json")
-DEEPSEEK_FILE = os.path.join(BASE_DIR, "output", "deepseek_relabel", "deepseek_relabel_raw.jsonl")
-DICT_FILE = os.path.join(BASE_DIR, "data", "中国职业大典.xlsx")
-OUTPUT_FILE = os.path.join(BASE_DIR, "output", "multidim_validation_report.txt")
-OUTPUT_JSON = os.path.join(BASE_DIR, "output", "multidim_validation_results.json")
-MODEL_PATH = str(_project.bge_model_path)
+OUTPUT_FILE = os.path.join(get_penghui_output_dir(), "multidim_validation_report.txt")
+OUTPUT_JSON = os.path.join(get_penghui_output_dir(), "multidim_validation_results.json")
+MODEL_PATH = resolve_base_model_path()
 
 
 # ── 大类关键词映射 ──────────────────────────────
@@ -81,25 +86,29 @@ MAJOR_CLASS_KEYWORDS = {
 }
 
 
-def parse_choice(annotation: Dict) -> Optional[str]:
+def parse_choice(annotation: dict[str, Any]) -> str | None:
+    """从单条标注记录中提取标准化后的候选选择。"""
     for r in annotation.get("result", []):
         if r["from_name"] == "best_candidate_choice":
             choices = r["value"].get("choices", [])
-            if not choices: return None
+            if not choices:
+                return None
             raw = choices[0]
-            if len(raw) >= 2 and raw[-1] in "ABCDE": return raw[-1]
-            if "不" in raw: return "NONE"
+            if len(raw) >= 2 and raw[-1] in "ABCDE":
+                return raw[-1]
+            if "不" in raw:
+                return "NONE"
     return None
 
 
-def load_occupation_dict(dict_path: str) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
+def load_occupation_dict(
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     """加载职业大典，返回 {code: text}, {code: title}, {code: major_class}。"""
-    df = pd.read_excel(dict_path, engine="openpyxl")
-    df.fillna("", inplace=True)
+    df = load_occupation_dict_df()
 
-    code_to_text = {}
-    code_to_title = {}
-    code_to_major = {}
+    code_to_text: dict[str, str] = {}
+    code_to_title: dict[str, str] = {}
+    code_to_major: dict[str, str] = {}
 
     for _, row in df.iterrows():
         code = str(row["code"]).strip()
@@ -113,8 +122,10 @@ def load_occupation_dict(dict_path: str) -> Tuple[Dict[str, str], Dict[str, str]
         code_to_title[code] = title
 
         parts = [title]
-        if desc and desc.lower() != "nan": parts.append(f"定义：{desc}")
-        if tasks and tasks.lower() != "nan": parts.append(f"任务：{tasks}")
+        if desc and desc.lower() != "nan":
+            parts.append(f"定义：{desc}")
+        if tasks and tasks.lower() != "nan":
+            parts.append(f"任务：{tasks}")
         code_to_text[code] = "。".join(parts)
 
         if major and major.lower() != "nan":
@@ -123,11 +134,11 @@ def load_occupation_dict(dict_path: str) -> Tuple[Dict[str, str], Dict[str, str]
     return code_to_text, code_to_title, code_to_major
 
 
-def guess_major_class(job_title: str) -> Optional[str]:
+def guess_major_class(job_title: str) -> str | None:
     """根据岗位名称中的关键词猜测职业大类。"""
     if not job_title:
         return None
-    scores = {}
+    scores: dict[str, int] = {}
     for mclass, info in MAJOR_CLASS_KEYWORDS.items():
         score = sum(1 for kw in info["kw"] if kw.lower() in job_title.lower())
         if score > 0:
@@ -137,7 +148,7 @@ def guess_major_class(job_title: str) -> Optional[str]:
     return max(scores, key=scores.get)
 
 
-def class_match_score(title_guess: Optional[str], occ_major: Optional[str]) -> float:
+def class_match_score(title_guess: str | None, occ_major: str | None) -> float:
     """
     返回岗位名称关键词猜测的大类与职业大典大类是否匹配。
     1.0 = 完全匹配, 0.0 = 不匹配, 0.5 = 无法判断
@@ -153,31 +164,26 @@ def class_match_score(title_guess: Optional[str], occ_major: Optional[str]) -> f
     return 0.5
 
 
-def main():
+def main() -> None:
+    """执行多信号交叉验证并输出质量分层报告。"""
     print("=" * 70)
     print("多维度交叉验证：检测标注数据集错误")
     print("=" * 70)
 
     # ── 加载数据 ──
     print("\n[1] 加载数据...")
-    with open(ANNOTATION_FILE, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
+    raw_data = load_annotations_from_pg()
     print(f"    人工标注: {len(raw_data)} 条任务")
 
-    ds_records = {}
-    with open(DEEPSEEK_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                r = json.loads(line)
-                ds_records[r["task_id"]] = r
+    ds_records = load_deepseek_records()
     print(f"    Deepseek: {len(ds_records)} 条记录")
 
-    code_to_text, code_to_title, code_to_major = load_occupation_dict(DICT_FILE)
+    code_to_text, code_to_title, code_to_major = load_occupation_dict()
     print(f"    职业大典: {len(code_to_text)} 个细类")
 
     # ── 加载 BGE 模型用于语义相似度 ──
     print("\n[2] 加载语义模型...")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_runtime_device()
     model = SentenceTransformer(MODEL_PATH, device=device)
     model.max_seq_length = 256
 
@@ -192,7 +198,7 @@ def main():
 
     # ── 解析每个任务的信号 ──
     print("\n[3] 计算多维度信号...")
-    results = []
+    results: list[dict[str, Any]] = []
 
     # 先计算标注员质量
     ann_quality = defaultdict(lambda: {"agree": 0, "total": 0})
@@ -212,7 +218,7 @@ def main():
             if c == majority:
                 ann_quality[aid]["agree"] += 1
 
-    ann_score = {}
+    ann_score: dict[Any, float] = {}
     for aid in ann_quality:
         s = ann_quality[aid]
         ann_score[aid] = s["agree"] / s["total"] if s["total"] > 0 else 0.5
@@ -278,9 +284,7 @@ def main():
         semantic_sim = None
         chosen_idx = None
         if chosen_code in code_to_text:
-            chosen_idx = code_to_text[chosen_code]
-            # We'll compute semantic similarity differently -
-            # rank of chosen occupation among all occupations
+            # 这里关心的不是候选间排序，而是该职业在全量职业库里的真实语义名次。
             sims = torch.mm(anchor_emb, occ_embeddings.T).squeeze(0)
             sorted_indices = torch.argsort(sims, descending=True).cpu().tolist()
             chosen_code_idx = occ_codes.index(chosen_code) if chosen_code in occ_codes else -1
@@ -361,7 +365,7 @@ def main():
     # ── 定义质量层级 ──
     print("\n[4] 质量层级分析...")
 
-    tiers = []
+    tiers: list[str] = []
     # 逐条打分
     for r in results:
         score = 0
@@ -478,12 +482,14 @@ def main():
     for r in results:
         by_tier[r["tier"]].append(r)
 
-    output_lines = []
-    def w(s):
-        output_lines.append(s)
+    output_lines: list[str] = []
+
+    def w(text: str) -> None:
+        """向报告缓存和控制台同时输出一行文本。"""
+        output_lines.append(text)
         # Only try to print; silently ignore encoding errors on Windows
         try:
-            print(s)
+            print(text)
         except UnicodeEncodeError:
             pass
 

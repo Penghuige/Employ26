@@ -3,7 +3,7 @@
 
 这个脚本负责把 `occupation_skill_pipeline.py` 中原本隐式完成的两步前置工作显式化，并落库:
 
-1. 使用 `src.preprocessing.parse_desc.parse_desc_df` 从岗位描述里切出 `任职要求_items_text`
+1. 使用 `src.data_pipeline.description_parsing.parse_desc_df` 从岗位描述里切出 `任职要求_items_text`
 2. 以“任职要求优先，RAG 匹配文本兜底”的方式构造职业匹配查询文本
 3. 使用本地 BGE 微调模型 `D:\\model\\bge-base-zh-finetuned` 做职业细类语义匹配
 4. 把解析结果与职业匹配结果统一写回 DuckDB
@@ -24,8 +24,8 @@ skill_extraction:
 - Top-K 候选结果
 
 运行示例:
-- `python -m src.preprocessing.prepare_skill_extraction_requirement_matches`
-- `python -m src.preprocessing.prepare_skill_extraction_requirement_matches --limit-job-rows 1000`
+- `python -m src.data_pipeline.requirement_match_prep`
+- `python -m src.data_pipeline.requirement_match_prep --limit-job-rows 1000`
 """
 
 from __future__ import annotations
@@ -33,14 +33,16 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import duckdb
 import pandas as pd
 
-from src.preprocessing.parse_desc import parse_desc_df
-from src.skill_extraction.bge_matcher import OccupationBGEMatcher
+from src.data_pipeline.description_parsing import parse_desc_df
 from src.skill_extraction.config import SkillExtractionConfig, load_skill_extraction_config
-from src.skill_extraction.history.data_source import OccupationSampleBuilder
+
+if TYPE_CHECKING:
+    from src.skill_extraction.bge_matcher import OccupationBGEMatcher
+    from src.skill_extraction.data_source import OccupationSampleBuilder
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,8 @@ def _load_jobs_for_skill_extraction(
     limit_job_rows: int | None = None,
 ) -> pd.DataFrame:
     """复用技能词典流程的数据加载逻辑，统一生成 `sample_row_id`。"""
+    from src.skill_extraction.data_source import OccupationSampleBuilder
+
     builder = OccupationSampleBuilder(config)
     return builder.load_jobs(limit_job_rows=limit_job_rows)
 
@@ -111,6 +115,8 @@ def build_requirement_match_dataframe(
         num_workers=max(1, int(parse_workers)),
     )
     parsed_df = _build_requirement_query_columns(parsed_df)
+
+    from src.skill_extraction.bge_matcher import OccupationBGEMatcher
 
     matcher = OccupationBGEMatcher(config)
     match_input_df = pd.concat(
@@ -172,6 +178,11 @@ def write_requirement_match_table(
     """
     if result_df.empty:
         raise ValueError("result_df 为空，无法写入 DuckDB")
+
+    try:
+        import duckdb
+    except ImportError as exc:
+        raise ImportError("缺少 duckdb 依赖，无法写入 requirement match 中间表。") from exc
 
     logger.info("准备写入 DuckDB: %s", config.requirement_match_table)
     with duckdb.connect(str(config.db_path)) as conn:

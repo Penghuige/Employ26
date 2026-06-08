@@ -354,7 +354,7 @@ class FlatSkillPipeline:
         异常:
             FileNotFoundError: 数据库文件不存在时抛出。
         """
-        from src.preprocessing.prepare_skill_extraction_requirement_matches import (
+        from src.data_pipeline.requirement_match_prep import (
             prepare_requirement_matches_to_duckdb,
         )
 

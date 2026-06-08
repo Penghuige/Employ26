@@ -35,6 +35,7 @@ lib64/
 .Python
 pip-log.txt
 pip-wheel-metadata/
+.claude/
 
 # ============================================================
 # IDE & Editors

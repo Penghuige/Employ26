@@ -1,3 +1,5 @@
+"""岗位描述结构化切分工具。"""
+
 import re
 import json
 import html
