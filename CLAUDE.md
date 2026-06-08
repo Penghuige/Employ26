@@ -67,6 +67,7 @@
 
 - 禁止硬编码绝对路径，如 `D:\...`
 - 所有项目路径、模型路径、PostgreSQL 连接参数统一通过 `config/paths.py` 获取
+- 模型运行后端、WSL vLLM、PyTorch device 策略统一通过 `config/model_runtime.yaml` 与 `src/model_platform/` 获取
 - 配置读取优先级为：显式参数 > `EMPLOYDATA_*` 环境变量 > `config/database.yaml` > 代码内兜底默认值
 - 不要在上层脚本中重复拼接路径、手写连接字符串或猜测表名
 - 需要 SQLAlchemy 连接 URL 时，优先使用 `paths.pg_sqlalchemy_url()`，不要自行拼接密码、端口和数据库名
@@ -82,6 +83,15 @@ pg_url = paths.pg_sqlalchemy_url()
 bge_model_path = paths.bge_model_path
 tasks_table = paths.get_table_name("annotations", "tasks_v2")
 ```
+
+### 模型平台
+
+- 新增或修改生成式 LLM 调用时，默认使用 `src.model_platform.llm.create_llm_client()`，不要在业务脚本里直接加载 Qwen/DeepSeek 权重
+- 生成式 LLM 默认后端是 WSL vLLM OpenAI-compatible API，配置见 `config/model_runtime.yaml` 与 `config/vllm.toml`
+- BGE embedding、BGE 微调、BERT 训练/预测仍使用 PyTorch / Transformers / SentenceTransformers，不强制走 vLLM
+- BGE embedding 统一通过 `src.model_platform.embeddings.get_embedding_model()` 或 `config.paths.get_project_paths().bge_model_path`
+- PyTorch device 与模型路径解析优先使用 `src.model_platform.torch_runtime`
+- 不要把 WSL vLLM 当成所有 PyTorch 工作负载的统一运行环境；它只负责生成式 LLM 推理
 
 ### 数据组织
 
@@ -161,6 +171,11 @@ tasks_table = paths.get_table_name("annotations", "tasks_v2")
 
 - 目录: `src/bge/`
 - 采用 `step_01` 到 `step_07` 顺序命名
+
+### 模型平台
+
+- 目录: `src/model_platform/`
+- 职责: 统一 LLM client、embedding 模型加载、PyTorch device 和模型路径解析
 
 ## 8. 代理执行流程
 

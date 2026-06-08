@@ -12,6 +12,7 @@
 #   - load_retriever(cfg) -> (OccupationRetriever, List[Dict])
 #   - load_qwen_model(model_path, dtype_str, device_map) -> (tokenizer, model)
 #   - batched_generate(tokenizer, model, prompts, ...) -> List[str]
+#   - batched_generate_with_client(prompts, ...) -> List[str]
 # =============================================================================
 
 import ast
@@ -34,6 +35,7 @@ from src.rag.kb_builder import (
     save_metadata,
 )
 from src.rag.retriever import OccupationRetriever
+from src.model_platform.llm import LLMClient, create_llm_client
 
 # 合法错误类型枚举（与 docs/manual_label_template.txt 保持同步）
 VALID_ERROR_TYPES = {
@@ -448,3 +450,23 @@ def batched_generate(
         tokenizer.decode(seq[input_len:], skip_special_tokens=True)
         for seq in out
     ]
+
+
+def batched_generate_with_client(
+    prompts: List[str],
+    *,
+    client: LLMClient | None = None,
+    max_new_tokens: int = 128,
+    temperature: float = 0.0,
+) -> List[str]:
+    """通过统一 LLM client 批量生成文本。
+
+    该函数是 BGE/RAG 质检脚本的新主路径。默认使用 WSL vLLM HTTP
+    服务，不再在 Windows 侧直接加载 Qwen 权重。
+    """
+    llm = client or create_llm_client()
+    return llm.batch_complete_text(
+        [("你是职业分类质检员。只输出用户要求的 JSON。", prompt) for prompt in prompts],
+        max_output_tokens=max_new_tokens,
+        temperature=temperature,
+    )

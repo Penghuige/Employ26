@@ -1,10 +1,8 @@
 """岗位描述结构化切分工具。"""
 
+import argparse
 import re
 import json
-import html
-import math
-import os
 import sys
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
@@ -12,108 +10,38 @@ from concurrent.futures.process import BrokenProcessPool
 from typing import List, Dict, Any, Tuple, Optional
 import pandas as pd
 
-TITLE_ALIASES = {
-    "岗位职责": [
-        "岗位职责", "职责描述", "工作职责", "工作内容", "职位描述", "主要职责", "职责",
-        "岗位描述", "岗位内容", "主要工作内容", "主要工作职责", "职位职责", "工作描述", "主要工作",
-        "职责要求", "工作范围", "职责范围", "工作职能", "工作总责", "总责",
-        "Responsibilities", "Responsibility", "Main Responsibilities", "Job Responsibilities",
-        "Key Responsibilities", "Roles and Responsibilities", "Role and Responsibility",
-        "Primary Responsibilities", "Primary and Secondary Responsibilities", "Job Description",
-        "Position Objective", "Role Purpose", "What you will do", "Job Profile"
-    ],
-    "任职要求": [
-        "任职要求", "岗位要求", "任职资格", "职位要求", "任职条件", "资格要求", "招聘要求",
-        "技能要求", "工作要求", "能力要求", "基本要求", "人员要求", "任职资格要求", "职责要求",
-        "要求", "应聘条件", "资质要求", "申请条件", "岗位条件", "候选人要求", "职位资质", "其他要求",
-        "学历要求", "岗位资格", "职位资格", "具体要求", "专业要求", "工作技能", "技能",
-        "Requirements", "Job Requirements", "Qualification", "Qualifications", "Candidate Profile"
-    ],
-    "福利待遇": [
-        "福利待遇", "公司福利", "薪酬福利", "薪资待遇", "福利", "薪资福利", "员工福利", "待遇",
-        "薪酬待遇", "员工福利", "职位福利", "待遇福利", "岗位福利", "福利保障", "薪资范围",
-        "薪资福利待遇", "薪酬福利待遇", "薪资标准", "薪酬标准"
-    ],
-    "其他信息": [
-        "工作地点", "上班地点", "工作时间", "上班时间", "联系方式", "联系地址", "工作地址", "公司地址",
-        "地址", "时间", "备注", "加分项", "我们提供", "你将获得", "公司简介", "应聘方式",
-        "住宿环境", "食堂", "宿舍", "附近地铁站", "附近公交站", "节日活动", "交通地址", "社保",
-        "培训", "假期福利", "社会保障", "人文关怀", "职业规划", "薪资结构", "职能类别", "关键字",
-        "关键词", "交通指引", "年龄要求", "联系人", "简历投递", "职位信息", "基本信息", "重要提示",
-        "公司介绍", "项目背景介绍", "职业介绍", "校招岗位", "招聘岗位", "招聘岗位和专业", "公司特色"
-        , "About the Company", "Who we are", "Brand Introduction", "Position Title", "Job Title",
-        "友情提醒", "提醒"
-    ]
-}
-MIDLINE_EXCLUDE = {"福利", "待遇", "地址", "时间", "路线"}
-
-ALIAS_TO_STD = sorted(
-    [(alias, std) for std, aliases in TITLE_ALIASES.items() for alias in aliases],
-    key=lambda x: len(x[0]),
-    reverse=True,
+from src.data_pipeline.description_schema import (
+    ALIAS_TO_STD,
+    DEFAULT_PARSED_TABLE,
+    DESCRIPTION_SECTIONS_JSON_COL,
+    DUTIES_TEXT_COL,
+    JOB_DESCRIPTION_CLEAN_COL,
+    OPTIONAL_NOTE_RE,
+    PARSER_VERSION,
+    RAG_QUERY_SOURCE_COL,
+    RAG_QUERY_TEXT_COL,
+    REQUIREMENTS_TEXT_COL,
+    SECTIONS_BRIEF_COL,
+    UNCLASSIFIED_TEXT_COL,
 )
+from src.data_pipeline.text_cleaning import normalize_text, remove_noise, sanitize_item
+from src.db.job_description_parsed import build_parsed_pg_rows, write_parsed_rows_to_postgres
+
+
 ALIAS_PATTERNS = [
     (re.compile(r'[\s\?？·•●▪◆★※~_]*'.join(map(re.escape, alias)), re.IGNORECASE), alias, std)
     for alias, std in ALIAS_TO_STD
 ]
-MIDLINE_ALIASES = [alias for alias, _ in ALIAS_TO_STD if len(alias) >= 2 and alias not in MIDLINE_EXCLUDE]
-MIDLINE_PATTERN = "|".join(re.escape(x) for x in sorted(set(MIDLINE_ALIASES), key=len, reverse=True))
 
 ITEM_TOKEN = r'(?:\d+\s*[、．,，)）]|\d+\.(?!\d)|[（(]\d+[)）]|[一二三四五六七八九十]+\s*[、.．]|[（(][一二三四五六七八九十]+[)）]|[-•●▪◆★])'
 ITEM_START_RE = re.compile(rf'(?:(?<=^)|(?<=[\n;；]))\s*(?=(?:"|“)?{ITEM_TOKEN})')
 ITEM_LEAD_RE = re.compile(rf'^\s*(?:"|“)?{ITEM_TOKEN}\s*')
-OPTIONAL_NOTE_RE = r'(?:[（(][^\n:：)]{{1,12}}[)）])?'
 PREFIX_ENUM_RE = re.compile(r'^\s*(?:[（(]?[一二三四五六七八九十0-9]+[)）]?[、.．]?\s*)')
 NOISE_ONLY_RE = re.compile(r'^\s*(?:[（(]?[一二三四五六七八九十0-9]+[)）]?[、.．。]?)\s*$')
 
 
-def strip_tags(text: str) -> str:
-    text = html.unescape(text)
-    text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
-    text = re.sub(r'(?is)<\s*br\s*/?\s*>', '\n', text)
-    text = re.sub(r'(?is)</\s*(div|p|li|tr|table|ul|ol|section|article)\s*>', '\n', text)
-    text = re.sub(r'(?is)<[^>]+>', '', text)
-    return text
-
-
-def remove_noise(text: str) -> str:
-    text = re.sub(r'[\u200b-\u200d\ufeff]', '', text)
-    text = re.sub(r'(?<=[A-Za-z0-9\u4e00-\u9fff])[\?？·•●▪◆★※~_]+(?=[A-Za-z0-9\u4e00-\u9fff])', '', text)
-    text = re.sub(r'[?？]{3,}', '', text)
-    return text
-
-
-def sanitize_item(text: str) -> str:
-    text = remove_noise(text).replace('?', '').replace('？', '')
-    text = re.sub(r'^[?？·•●▪◆★※\s"\']+', '', text)
-    text = re.sub(r'[?？·•●▪◆★※\s"\']+$', '', text)
-    text = text.strip("[] ")
-    text = re.sub(r'\s+', ' ', text).strip(' ;；')
-    if text in {'[', ']', '"', "'", '[]', '----', '-----'}:
-        return ''
-    return text
-
-
-def normalize_text(text: str) -> str:
-    if text is None or (isinstance(text, float) and math.isnan(text)):
-        return ""
-    text = str(text)
-    text = strip_tags(text)
-    text = remove_noise(text)
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.replace("：", ":").replace("（", "(").replace("）", ")").replace("【", "[").replace("】", "]").replace("．", ".")
-    text = re.sub(r"[ \t\u3000\xa0]+", " ", text)
-    inline_re = re.compile(
-        rf'(?<!^)(?<!\n)(?P<prefix>[；;。.!?？!"\']|\s)\s*(?P<head>(?:\[)?(?:{MIDLINE_PATTERN})(?:\])?{OPTIONAL_NOTE_RE}\s*(?::)?)'
-    )
-    for _ in range(3):
-        text = inline_re.sub(lambda m: f"{m.group('prefix')}\n{m.group('head')}", text)
-    text = re.sub(r'(?<!^)(?<!\n)(?=[一二三四五六七八九十]+[、.])', '\n', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-
 def standardize_title(raw_title: str) -> str:
+    """将原始标题别名规范到岗位职责、任职要求、福利待遇或其他信息。"""
     cleaned = sanitize_item(raw_title)
     cleaned = PREFIX_ENUM_RE.sub("", cleaned)
     cleaned = re.sub(OPTIONAL_NOTE_RE + r"$", "", cleaned).strip()
@@ -164,6 +92,7 @@ def standardize_title(raw_title: str) -> str:
 
 
 def match_heading(line: str):
+    """识别单行是否为 section 标题，并返回标题与同行正文。"""
     original = line.strip()
     if not original:
         return None
@@ -193,6 +122,7 @@ def match_heading(line: str):
 
 
 def split_numbered(text: str) -> List[str]:
+    """按数字、中文序号或项目符号切分列表文本。"""
     starts = [m.start() for m in ITEM_START_RE.finditer(text)]
     if re.match(rf'^\s*(?:"|“)?{ITEM_TOKEN}', text):
         if not starts or starts[0] != 0:
@@ -216,6 +146,7 @@ def split_numbered(text: str) -> List[str]:
 
 
 def split_cn_subheads(text: str):
+    """切分“一、标题 二、标题”这类中文子标题结构。"""
     pat = re.compile(r'([一二三四五六七八九十]+)\s*[、.]\s*([^\n:：；;。]{1,20})(?::)?')
     ms = list(pat.finditer(text))
     if len(ms) < 2 or ms[0].start() != 0:
@@ -240,6 +171,7 @@ def split_cn_subheads(text: str):
 
 
 def split_items(text: str) -> List[str]:
+    """将 section 正文切分为条目，按编号、换行、分号逐级兜底。"""
     text = text.strip()
     if not text:
         return []
@@ -260,6 +192,7 @@ def split_items(text: str) -> List[str]:
 
 
 def likely_duty_text(lines: List[str]) -> bool:
+    """用关键词粗判无标题文本更像职责还是要求。"""
     t = " ".join(lines)
     duty_score = len(re.findall(r"负责|参与|开展|执行|制定|完成|跟进|处理|管理|维护|开发|设计|研究|协助|推进|撰写|拓展|走访|下达|调试|改善|培训", t))
     req_score = len(re.findall(r"学历|专业|经验|优先|熟练|能力|责任心|沟通|任职|要求|资格|抗压|本科|大专|硕士|博士|以上学历", t))
@@ -267,6 +200,7 @@ def likely_duty_text(lines: List[str]) -> bool:
 
 
 def infer_section_title(lines: List[str], fallback: Optional[str] = None) -> Optional[str]:
+    """根据关键词得分推断无标题文本所属 section。"""
     text = " ".join(sanitize_item(x) for x in lines if sanitize_item(x))
     if not text:
         return fallback
@@ -294,6 +228,7 @@ def infer_section_title(lines: List[str], fallback: Optional[str] = None) -> Opt
 
 
 def parse_job_description(text: str) -> Dict[str, Any]:
+    """解析单条岗位描述，返回原文、sections 和无法归类文本。"""
     raw = "" if text is None else str(text)
     text = normalize_text(raw)
     if not text:
@@ -576,15 +511,44 @@ def parse_desc_df(
         rag_query_texts.append(rag_query_text)
         rag_query_sources.append(rag_query_source)
 
-    output_df["岗位描述_清洗"] = cleaned_descs
-    output_df["岗位描述_切分JSON"] = parsed_jsons
-    output_df["任职要求_items_text"] = requirement_texts
-    output_df["岗位职责_items_text"] = duty_texts
-    output_df["unclassified_text"] = unclassified_texts
-    output_df["sections_brief"] = sections_briefs
-    output_df["RAG匹配文本"] = rag_query_texts
-    output_df["RAG匹配来源"] = rag_query_sources
+    output_df[JOB_DESCRIPTION_CLEAN_COL] = cleaned_descs
+    output_df[DESCRIPTION_SECTIONS_JSON_COL] = parsed_jsons
+    output_df[REQUIREMENTS_TEXT_COL] = requirement_texts
+    output_df[DUTIES_TEXT_COL] = duty_texts
+    output_df[UNCLASSIFIED_TEXT_COL] = unclassified_texts
+    output_df[SECTIONS_BRIEF_COL] = sections_briefs
+    output_df[RAG_QUERY_TEXT_COL] = rag_query_texts
+    output_df[RAG_QUERY_SOURCE_COL] = rag_query_sources
     return output_df
+
+
+def parse_and_write_desc_df_to_postgres(
+    df: pd.DataFrame,
+    source_table: str,
+    source_platform: str | None = None,
+    table_name: str = DEFAULT_PARSED_TABLE,
+    desc_col: str = "岗位描述",
+    title_col: str = "岗位名称",
+    batch_size: int = 2000,
+    num_workers: int = 1,
+    parser_version: str = PARSER_VERSION,
+) -> int:
+    """解析 DataFrame 中的岗位描述，并将结果写入 PostgreSQL。"""
+    parsed_df = parse_desc_df(
+        df,
+        desc_col=desc_col,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
+    rows = build_parsed_pg_rows(
+        parsed_df=parsed_df,
+        source_table=source_table,
+        source_platform=source_platform,
+        parser_version=parser_version,
+        title_col=title_col,
+        desc_col=desc_col,
+    )
+    return write_parsed_rows_to_postgres(rows, table_name=table_name)
 
 
 def build_issue_dataframe(parsed_df: pd.DataFrame) -> pd.DataFrame:
@@ -626,44 +590,47 @@ def build_hardcase_dataframe(parsed_df: pd.DataFrame) -> pd.DataFrame:
     return parsed_df.iloc[suspicious_idx].copy() if suspicious_idx else parsed_df.iloc[0:0].copy()
 
 
-def main():
-    # name = "智联招聘"
-    name = "前程无忧"
-    input_path = f"output\\samples\\{name}_样本_1%.csv"
-    output_path = f"./{name}_样本_1%_岗位描述切分结果_v2.csv"
-    sample_json_path = f"./{name}_岗位描述切分样例_v2.jsonl"
-    issue_csv_path = f"./{name}_样本_1%_unclassified问题行.csv"
-    hard_case_path = f"./{name}_样本_1%_疑难样本待复核.csv"
+def build_parser() -> argparse.ArgumentParser:
+    """构建命令行参数。"""
+    parser = argparse.ArgumentParser(description="岗位描述结构化切分")
+    parser.add_argument("--input-csv", required=True, help="输入 CSV 文件路径")
+    parser.add_argument("--output-csv", default=None, help="可选：保存解析结果 CSV")
+    parser.add_argument("--desc-col", default="岗位描述", help="岗位描述列名")
+    parser.add_argument("--title-col", default="岗位名称", help="岗位名称列名")
+    parser.add_argument("--source-table", default="", help="写入 PostgreSQL 时记录的来源表名")
+    parser.add_argument("--source-platform", default=None, help="可选：来源平台名")
+    parser.add_argument("--target-table", default=DEFAULT_PARSED_TABLE, help="PostgreSQL 解析结果表名")
+    parser.add_argument("--write-postgres", action="store_true", help="将解析结果写入 PostgreSQL")
+    parser.add_argument("--parse-workers", type=int, default=1, help="岗位描述切分并发数")
+    parser.add_argument("--parse-batch-size", type=int, default=2000, help="岗位描述切分批大小")
+    return parser
 
-    df = pd.read_csv(input_path, encoding="utf-8")
-    default_workers = max(1, min(8, max(1, (os.cpu_count() or 1) - 1)))
+
+def main() -> None:
+    """CLI 入口。"""
+    args = build_parser().parse_args()
+    df = pd.read_csv(args.input_csv, encoding="utf-8")
     parsed_df = parse_desc_df(
         df,
-        desc_col="岗位描述",
-        batch_size=2000,
-        num_workers=default_workers,
+        desc_col=args.desc_col,
+        batch_size=max(1, int(args.parse_batch_size)),
+        num_workers=max(1, int(args.parse_workers)),
     )
-    parsed_df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    if args.output_csv:
+        parsed_df.to_csv(args.output_csv, index=False, encoding="utf-8-sig")
 
-    issue_df = build_issue_dataframe(parsed_df)
-    issue_df.to_csv(issue_csv_path, index=False, encoding="utf-8-sig")
-
-    with open(sample_json_path, "w", encoding="utf-8") as f:
-        for i, obj_text in enumerate(parsed_df["岗位描述_切分JSON"].head(200)):
-            obj = json.loads(obj_text)
-            f.write(json.dumps({"row": int(i), **obj}, ensure_ascii=False) + "\n")
-
-    hard_df = build_hardcase_dataframe(parsed_df)
-    hard_df.to_csv(hard_case_path, index=False, encoding="utf-8-sig")
-
-    print("saved", output_path)
-    print("samples", sample_json_path)
-    print("hard_cases", hard_case_path)
-    print("hard_case_count", len(hard_df))
-
-    print("rows", len(parsed_df))
-    print("issues", issue_csv_path)
-    print("hard_cases", hard_case_path)
+    if args.write_postgres:
+        if not args.source_table:
+            raise ValueError("--write-postgres 需要同时提供 --source-table")
+        rows = build_parsed_pg_rows(
+            parsed_df=parsed_df,
+            source_table=args.source_table,
+            source_platform=args.source_platform,
+            title_col=args.title_col,
+            desc_col=args.desc_col,
+        )
+        written_count = write_parsed_rows_to_postgres(rows, table_name=args.target_table)
+        print(f"written rows: {written_count}")
 
 if __name__ == "__main__":
     main()

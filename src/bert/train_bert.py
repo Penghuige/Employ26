@@ -15,13 +15,15 @@ from transformers import BertTokenizerFast, BertForSequenceClassification, get_l
 from sklearn.metrics import accuracy_score, f1_score
 from tqdm import tqdm
 
+from src.model_platform.torch_runtime import resolve_model_path, resolve_torch_device
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 BASE_DIR  = Path(__file__).parent.parent.parent
 DB_PATH   = BASE_DIR / "output" / "recruit.duckdb"
 MODEL_DIR = BASE_DIR / "output" / "models" / "bert_occ_category"
 _LOCAL = Path("output/pretrained/chinese-bert-wwm-ext")
-_PRETRAINED = str(_LOCAL) if _LOCAL.exists() else "hfl/chinese-bert-wwm-ext"
+_PRETRAINED = str(_LOCAL) if _LOCAL.exists() else str(resolve_model_path("bert"))
 CFG = {"pretrained": _PRETRAINED, "max_len": 128, "batch_size": 32,
        "epochs": 10, "lr": 2e-5, "warmup_ratio": 0.1, "patience": 3, "seed": 42}
 
@@ -110,7 +112,7 @@ def main():
     from tqdm import tqdm
 
     set_seed(CFG["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(resolve_torch_device())
     logger.info("Using device: %s", device)
 
     logger.info("Reading data from DuckDB...")

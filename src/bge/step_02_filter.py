@@ -28,11 +28,10 @@ from tqdm.auto import tqdm as tqdm_auto
 from ..data_pipeline.description_parsing import parse_desc_df
 from ..rag.config import RAGConfig
 from ..rag.qc_utils import (
-    batched_generate,
+    batched_generate_with_client,
     build_qc_prompt,
     build_rag_context,
     extract_json,
-    load_qwen_model,
     load_retriever,
     load_task_chunk_retriever,
     normalize_label,
@@ -342,8 +341,7 @@ def _prepare_parsed_task_candidates(
 def _run_quality_check_with_selected_candidates(
     df_matched: pd.DataFrame,
     selected_infos: List[Dict],
-    tokenizer,
-    model,
+    llm_client,
     prefix: str,
 ) -> pd.DataFrame:
     """针对指定候选结果运行一轮质检，并写入带前缀的结果列。"""
@@ -383,12 +381,11 @@ def _run_quality_check_with_selected_candidates(
     ):
         batch_prompts = prompts[start: start + INFER_BATCH_SIZE]
         batch_pred_titles = pred_titles[start: start + INFER_BATCH_SIZE]
-        outputs = batched_generate(
-            tokenizer,
-            model,
+        outputs = batched_generate_with_client(
             batch_prompts,
             max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=DO_SAMPLE,
+            temperature=0.0,
+            client=llm_client,
         )
         for raw_out, pred_t in zip(outputs, batch_pred_titles):
             parsed = extract_json(raw_out)
@@ -466,8 +463,7 @@ def _summarize_selected_infos(name: str, selected_infos: List[Dict]) -> None:
 def run_tier1_quality_check(
     df_matched: pd.DataFrame,
     cfg: RAGConfig,
-    tokenizer,
-    model,
+    llm_client,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """对规则层命中的 Tier1 候选执行 legacy / parsed_adaptive_task / compare 质检。"""
     print(f"\n[Step 6] 开始对 {len(df_matched)} 条 Tier1 候选执行 RAG 二次质检，模式: {RAG_MATCH_MODE}")
@@ -481,8 +477,7 @@ def run_tier1_quality_check(
         legacy_result = _run_quality_check_with_selected_candidates(
             df_matched=df_matched,
             selected_infos=legacy_selected,
-            tokenizer=tokenizer,
-            model=model,
+            llm_client=llm_client,
             prefix="legacy",
         )
         final_result = _apply_selected_strategy(legacy_result, prefix="legacy")
@@ -495,8 +490,7 @@ def run_tier1_quality_check(
         parsed_result = _run_quality_check_with_selected_candidates(
             df_matched=df_matched,
             selected_infos=parsed_selected,
-            tokenizer=tokenizer,
-            model=model,
+            llm_client=llm_client,
             prefix="parsed",
         )
         final_result = _apply_selected_strategy(parsed_result, prefix="parsed")
@@ -517,15 +511,13 @@ def run_tier1_quality_check(
     legacy_result = _run_quality_check_with_selected_candidates(
         df_matched=df_matched,
         selected_infos=legacy_selected,
-        tokenizer=tokenizer,
-        model=model,
+        llm_client=llm_client,
         prefix="legacy",
     )
     parsed_result = _run_quality_check_with_selected_candidates(
         df_matched=df_matched,
         selected_infos=parsed_selected,
-        tokenizer=tokenizer,
-        model=model,
+        llm_client=llm_client,
         prefix="parsed",
     )
 
@@ -643,15 +635,16 @@ def main_step2() -> None:
         f"未命中={len(df_rule_pending)}，耗时={rule_end_time - start_time:.2f}s"
     )
 
-    print("\n>>> 加载 Qwen3 模型...")
+    print("\n>>> 初始化统一 LLM client（默认 WSL vLLM）...")
     cfg = _build_rag_cfg()
-    tokenizer, model = load_qwen_model(QWEN_MODEL_PATH, QWEN_DTYPE, QWEN_DEVICE_MAP)
+    from src.model_platform.llm import create_llm_client
+
+    llm_client = create_llm_client()
 
     df_verified, df_downgraded = run_tier1_quality_check(
         df_matched=df_rule_matched,
         cfg=cfg,
-        tokenizer=tokenizer,
-        model=model,
+        llm_client=llm_client,
     )
 
     df_final_pending = pd.concat([df_rule_pending, df_downgraded], ignore_index=True)

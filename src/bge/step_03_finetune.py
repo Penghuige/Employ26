@@ -7,6 +7,8 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from sentence_transformers import SentenceTransformer, InputExample, losses, models
 
+from src.model_platform.torch_runtime import empty_cuda_cache_safe, resolve_torch_device
+
 # 过滤 Numpy 版本警告，保持终端清洁
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -194,10 +196,9 @@ def train_finetuned_model():
         return
 
     # 清理显存碎片
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    empty_cuda_cache_safe()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = resolve_torch_device()
     abs_local_path = os.path.abspath(LOCAL_MODEL_PATH)
 
     print(f"\n>>> 步骤 5: 从本地路径加载模型组件...")

@@ -8,6 +8,8 @@ import torch
 from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 
+from src.model_platform.torch_runtime import resolve_torch_device
+
 # ================= 配置区域 =================
 # 1. 输入输出路径配置
 INPUT_PENDING_FILE = r"src\bge\data5\Tier2_Pending_Data.csv"
@@ -362,7 +364,7 @@ def generate_or_load_scores():
     official_records = load_official_dictionary()
     official_texts = [rec['search_text'] for rec in official_records]
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = resolve_torch_device()
     print(f"-> 加载微调模型 [{FINETUNED_MODEL_PATH}] 至 {device.upper()}...")
     model = SentenceTransformer(FINETUNED_MODEL_PATH, device=device)
     model.max_seq_length = MAX_SEQ_LENGTH

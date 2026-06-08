@@ -54,6 +54,7 @@ tables:
     hard_skill_match_details_dev: public.hard_skill_match_details_dev
     hard_skill_match_results_dev: public.hard_skill_match_results_dev
     hard_skill_match_summary_dev: public.hard_skill_match_summary_dev
+    job_description_parsed: public.job_description_parsed
     match_training_features: public.match_training_features
     rag_match_results_v2: public.rag_match_results_v2
     skill_extraction_requirement_matches: public.skill_extraction_requirement_matches

@@ -37,9 +37,8 @@ from ..rag.config import RAGConfig
 from ..rag.qc_utils import (
     build_qc_prompt,
     build_rag_context,
-    batched_generate,
+    batched_generate_with_client,
     extract_json,
-    load_qwen_model,
     load_retriever,
     normalize_label,
     safe_str,
@@ -407,9 +406,11 @@ def run_auto_labeling() -> None:
         })
     print(f"   任务组装完成，共 {len(tasks)} 条。")
 
-    # ---- Step 4: 加载 Qwen3 并批量推理 ----
-    print("[4/5] 加载 Qwen3-8B 并执行批量推理标注...")
-    tokenizer, model = load_qwen_model(MODEL_PATH, TORCH_DTYPE, DEVICE_MAP)
+    # ---- Step 4: 通过统一 LLM client 执行批量推理 ----
+    print("[4/5] 初始化统一 LLM client（默认 WSL vLLM）并执行批量推理标注...")
+    from src.model_platform.llm import create_llm_client
+
+    llm_client = create_llm_client()
 
     rows_out = []
     failed_raw_records = []
@@ -428,9 +429,12 @@ def run_auto_labeling() -> None:
     for start in pbar:
         batch = tasks[start: start + INFER_BATCH_SIZE]
         prompts = [t["prompt"] for t in batch]
-        outputs = batched_generate(
-            tokenizer, model, prompts,
-            max_new_tokens=MAX_NEW_TOKENS, do_sample=DO_SAMPLE)
+        outputs = batched_generate_with_client(
+            prompts,
+            client=llm_client,
+            max_new_tokens=MAX_NEW_TOKENS,
+            temperature=TEMPERATURE,
+        )
 
         for task, raw_out in zip(batch, outputs):
             parsed = extract_json(raw_out)

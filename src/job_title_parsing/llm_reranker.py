@@ -1,8 +1,4 @@
-"""LLM 候选重排序模块。
-
-通过调用 WSL 中的 vLLM Qwen3.6-27B 对 MatchPipeline 产出的 TopK 候选
-进行语义验证和重排序，输出精排后的候选列表及置信度。
-"""
+"""LLM 候选重排序模块。"""
 
 from __future__ import annotations
 
@@ -141,9 +137,8 @@ class RerankResult:
 class LLMReranker:
     """基于 LLM 的候选职业重排序器。
 
-    支持双后端：
-    - external_api: 通过 LLMRouter 调用外部 API（GPT-5.4 等），默认后端。
-    - vllm: 调用 WSL 中的 vLLM Qwen 模型（需服务运行中）。
+    LLM 调用统一通过 `src.model_platform.llm`，默认后端由
+    `config/model_runtime.yaml` 决定。
 
     使用方式：
         reranker = LLMReranker()
@@ -152,7 +147,7 @@ class LLMReranker:
 
     def __init__(
         self,
-        backend: str = "external_api",
+        backend: str | None = None,
         vllm_config_path: str | Path | None = None,
         system_prompt: str = "",
         temperature: float = 0.1,
@@ -162,7 +157,7 @@ class LLMReranker:
         """初始化 LLM 重排序器。
 
         Args:
-            backend: 后端选择，"external_api" 或 "vllm"。
+            backend: 可选后端覆盖；为空时读取模型平台默认配置。
             vllm_config_path: vLLM TOML 配置文件路径，仅 vllm 后端使用。
             system_prompt: 自定义 system prompt，为空时使用内置默认。
             temperature: LLM 采样温度（低值确保输出稳定）。
@@ -175,30 +170,17 @@ class LLMReranker:
         self._request_timeout = request_timeout
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
 
-        # vLLM 后端惰性配置
-        self._vllm_config: Any = None
         self._vllm_config_path = vllm_config_path
-
-        # external_api 后端惰性初始化
-        self._router: Any = None
+        self._client: Any = None
 
     @property
-    def vllm_config(self) -> Any:
-        """惰性加载 vLLM 配置对象。"""
-        if self._vllm_config is None:
-            from src.utils.vllm_utils import load_vllm_config
+    def client(self) -> Any:
+        """惰性初始化统一 LLM client。"""
+        if self._client is None:
+            from src.model_platform.llm import create_llm_client
 
-            self._vllm_config = load_vllm_config(self._vllm_config_path)
-        return self._vllm_config
-
-    @property
-    def router(self) -> Any:
-        """惰性初始化 LLMRouter。"""
-        if self._router is None:
-            from src.utils.llm_router import LLMRouter
-
-            self._router = LLMRouter.from_env()
-        return self._router
+            self._client = create_llm_client(backend=self._backend)
+        return self._client
 
     def is_server_available(self) -> bool:
         """检查选定的 LLM 后端是否可用。
@@ -206,12 +188,13 @@ class LLMReranker:
         Returns:
             bool: 后端可用返回 True。
         """
-        if self._backend == "external_api":
-            return self.router.is_configured()
         try:
-            from src.utils.vllm_utils import check_server
-
-            check_server(self.vllm_config)
+            self.client.complete_text(
+                system_prompt="你是健康检查助手。",
+                user_prompt="请只回复 ok",
+                max_output_tokens=8,
+                temperature=0.0,
+            )
             return True
         except Exception:
             return False
@@ -261,28 +244,14 @@ class LLMReranker:
         )
 
         try:
-            if self._backend == "external_api":
-                content = self.router.complete_text(
-                    system_prompt=self._system_prompt,
-                    user_prompt=user_prompt,
-                    strength="cheap",
-                    max_output_tokens=self._max_tokens,
-                    reasoning_effort="low",
-                )
-            else:
-                from src.utils.vllm_utils import chat_completion, extract_message_parts
-
-                messages: List[Dict[str, str]] = [
-                    {"role": "system", "content": self._system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ]
-                response = chat_completion(
-                    config=self.vllm_config,
-                    messages=messages,
-                    max_tokens=self._max_tokens,
-                    temperature=self._temperature,
-                )
-                content, _, _ = extract_message_parts(response)
+            content = self.client.complete_text(
+                system_prompt=self._system_prompt,
+                user_prompt=user_prompt,
+                strength="cheap",
+                max_output_tokens=self._max_tokens,
+                reasoning_effort="low",
+                temperature=self._temperature,
+            )
 
             if not content:
                 return RerankResult(

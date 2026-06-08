@@ -71,7 +71,37 @@
 
 这三组表结构基本一致，是三个招聘平台的数据镜像。
 
-### 4.2 标注数据层
+治理原则：
+
+- `raw_data` 继续作为平台原始镜像和溯源依据保留，不建议物理合并三家平台原始表
+- `cleaned_data` 暂作为历史兼容表保留，但不再建议作为新流程入口
+- 如果只是清洗“岗位描述”文本，后续应沉淀为派生字段或解析特征表，而不是复制整张招聘大表
+- 新流程需要跨平台分析时，应读取统一规范层或解析特征层，而不是直接面向三套平台 schema 写重复逻辑
+
+### 4.2 招聘统一规范层
+
+统一规范层用于把三家平台的同义字段映射成英文公共字段，并用 `source_platform` 区分平台来源。
+
+当前建议入口：
+
+- 短期：新增 view 或表，例如 `public.recruitment_jobs_normalized`
+- 中期：如规模继续扩大，可独立为 `recruitment.jobs`
+
+列名策略：
+
+- 新表、新 view、新公共接口统一使用英文列名
+- 历史中文字段继续保留在原始镜像层，例如 `岗位名称`、`岗位描述`、`岗位描述_清洗`
+- 暂不直接 rename 历史大表字段，避免破坏仍引用中文列名的既有脚本
+
+### 4.3 岗位描述解析特征层
+
+岗位描述解析结果沉淀到：
+
+- `public.job_description_parsed`
+
+该表由 `src.data_pipeline.description_parsing` 写入，定位是可复用的结构化文本特征层，用于技能抽取、RAG、BGE 等流程复用解析结果，避免每个流程重复切分“岗位职责 / 任职要求”。
+
+### 4.4 标注数据层
 
 - `annotations.label_studio_annotations`
 - `annotations.label_studio_tasks_v2`
@@ -80,7 +110,7 @@
 
 这是 Label Studio 导入 PostgreSQL 后的人类标注结果，以及 DeepSeek 重标结果。它是第二轮标注实验、训练集构造和人机分歧分析的核心来源。
 
-### 4.3 职业词典与匹配结果层
+### 4.5 职业词典与匹配结果层
 
 - `public.occ_dict`
 - `public.occ_dict_detailed`
@@ -92,7 +122,7 @@
 
 这部分是职业大典、RAG 匹配特征、职业匹配结果的核心表。
 
-### 4.4 技能抽取实验层
+### 4.6 技能抽取实验层
 
 - `public.skill_extraction_requirement_matches`
 - `public.hard_skill_match_results_dev`
@@ -101,7 +131,7 @@
 
 这部分主要服务技能抽取、技能匹配与调试。
 
-### 4.5 采样与测试层
+### 4.7 采样与测试层
 
 - `public.jd_raw`
 - `public.medium_sample`
@@ -635,6 +665,46 @@ join public.jd_raw j
 - 字段数：`10`
 - 用途：端到端测试表
 
+#### 岗位描述解析特征表
+
+##### `public.job_description_parsed`
+
+- 用途：岗位描述结构化解析结果表，由 `src.data_pipeline.description_parsing` 写入
+- 定位：解析特征层，不替代三平台原始表，也不继续复制整张 `cleaned_data`
+- 列名：统一使用英文列名，作为后续新流程公共接口
+- 唯一键：`(source_table, source_row_number, parser_version)`
+
+关键字段：
+
+- `source_platform`
+- `source_table`
+- `source_row_number`
+- `source_record_id`
+- `job_title`
+- `job_description_raw`
+- `job_description_clean`
+- `description_sections` (`jsonb`)
+- `requirements_text`
+- `duties_text`
+- `unclassified_text`
+- `sections_brief`
+- `rag_query_text`
+- `rag_query_source`
+- `parser_version`
+- `parsed_at`
+
+推荐索引：
+
+- `source_platform`
+- `(source_table, source_row_number)`
+- `description_sections` GIN
+
+说明：
+
+- `source_table + source_row_number` 用于回溯原始平台表或样本表
+- `description_sections` 保存完整切分 JSON，`requirements_text` / `duties_text` 保存高频检索文本
+- `parser_version` 用于支持后续解析规则升级后的并行重跑
+
 #### 技能抽取类表
 
 ##### `public.skill_extraction_requirement_matches`
@@ -855,6 +925,36 @@ from public.skill_extraction_requirement_matches
 where __source_table = 'recruit.main.gd_recruit_qcwy_sample';
 ```
 
+### 9.7 查看岗位描述解析结果并回溯来源
+
+```sql
+select
+    source_platform,
+    source_table,
+    source_row_number,
+    source_record_id,
+    job_title,
+    requirements_text,
+    duties_text,
+    parser_version,
+    parsed_at
+from public.job_description_parsed
+where source_table = '"51job".sample'
+order by source_row_number
+limit 100;
+```
+
+如果需要检查 JSONB 切分结果：
+
+```sql
+select
+    source_record_id,
+    description_sections -> 'sections' as sections
+from public.job_description_parsed
+where description_sections ? 'sections'
+limit 20;
+```
+
 ## 10. 已执行的 `annotations` 优化
 
 本节记录已经在 `Employ26` 数据库中执行过的 `annotations` schema 优化。对应 SQL 已沉淀到 `docs/optimize_annotations_schema.sql`。
@@ -986,10 +1086,20 @@ on public.jd_raw (row_id);
    - 不同表存在 `job_title` / `岗位名称` 并行
    - 建议后续新增表统一采用英文列名，保留中文列名只用于历史表
 
-4. 将其他高频 JSON 文本字段逐步结构化
+4. 建立招聘统一规范入口
+   - 保留 `51job`、`Liepin`、`Zhilian` 三个原始 schema 作为平台镜像
+   - 新增 `public.recruitment_jobs_normalized` 或 `recruitment.jobs` 作为跨平台分析入口
+   - 使用 `source_platform`、`source_table`、`source_row_number` 保留溯源能力
+
+5. 将岗位描述解析结果作为公共特征层
+   - 新流程优先读取 `public.job_description_parsed`
+   - 技能抽取、RAG、BGE 流程不应重复解析同一份岗位描述
+   - `cleaned_data` 仅作为历史兼容表保留，不再作为新流程默认入口
+
+6. 将其他高频 JSON 文本字段逐步结构化
    - `candidates_json -> candidates_jsonb`
 
-5. 继续补表注释和列注释
+7. 继续补表注释和列注释
    - `annotations` 核心表已补充基础注释
    - 其他业务表仍应补充注释，方便自动生成数据字典
 
@@ -1009,3 +1119,4 @@ on public.jd_raw (row_id);
 2. 补齐高频 join 字段的索引
 3. 统一任务链路和职业 code 链路的引用方式
 4. 逐步把其他高频 JSON 文本字段迁移到 `jsonb`
+5. 将招聘主数据收敛到英文列名的统一规范层，并把岗位描述解析结果沉淀到 `public.job_description_parsed`

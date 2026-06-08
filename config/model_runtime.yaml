@@ -1,0 +1,21 @@
+# 模型运行时配置
+#
+# 数据库表和本地模型路径仍由 config/database.yaml 管理。
+# 本文件只描述模型运行后端、设备偏好和服务策略。
+
+llm:
+  default_backend: wsl_vllm
+  fallback_backend: external_api
+  vllm_config: config/vllm.toml
+  env_file: .env.local
+  request_timeout: 600
+  retry: 2
+
+embedding:
+  default_model: bge
+  default_batch_size: 128
+  normalize_embeddings: true
+
+torch:
+  prefer_cuda: true
+  empty_cache_after_batch: false

@@ -32,6 +32,8 @@ import pandas as pd
 from tqdm import tqdm
 from transformers import BertTokenizerFast, BertForTokenClassification
 
+from src.model_platform.torch_runtime import resolve_torch_device
+
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -69,7 +71,7 @@ class NERPredictor:
         self.tokenizer = BertTokenizerFast.from_pretrained(str(mdir))
         self.model     = BertForTokenClassification.from_pretrained(str(mdir))
         self.model.eval()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(resolve_torch_device())
         self.model.to(self.device)
         logger.info("模型加载完成，设备: %s，标签数: %d",
                     self.device, self.model.config.num_labels)

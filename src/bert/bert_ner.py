@@ -35,6 +35,8 @@ from transformers import (
 )
 from tqdm import tqdm
 
+from src.model_platform.torch_runtime import resolve_model_path, resolve_torch_device
+
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ JSON_PATH     = BASE_DIR / "data" / "ls_jd_tasks.json"
 NER_MODEL_DIR = BASE_DIR / "output" / "models" / "bert_ner"
 NER_DATA_DIR  = BASE_DIR / "output" / "ner_data"
 _LOCAL        = BASE_DIR / "output" / "pretrained" / "chinese-bert-wwm-ext"
-PRETRAINED    = str(_LOCAL) if _LOCAL.exists() else "hfl/chinese-bert-wwm-ext"
+PRETRAINED    = str(_LOCAL) if _LOCAL.exists() else str(resolve_model_path("bert"))
 
 # ── 标签映射 ──────────────────────────────────────────────
 LABEL2ID  = {"O": 0, "B-TITLE": 1, "I-TITLE": 2, "B-SKILL": 3, "I-SKILL": 4}
@@ -241,7 +243,7 @@ def train_ner():
     from sklearn.model_selection import train_test_split
     random.seed(CFG["seed"]); np.random.seed(CFG["seed"])
     torch.manual_seed(CFG["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(resolve_torch_device())
     logger.info("设备: %s", device)
     NER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     cache = NER_DATA_DIR / "bio_samples.json"
@@ -320,7 +322,7 @@ class NERPredictor:
         self.tokenizer = BertTokenizerFast.from_pretrained(str(mdir))
         self.model     = BertForTokenClassification.from_pretrained(str(mdir))
         self.model.eval()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(resolve_torch_device())
         self.model.to(self.device)
 
     def predict(self, text):
