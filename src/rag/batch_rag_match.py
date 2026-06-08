@@ -54,18 +54,11 @@ import pandas as pd
 from dotenv import load_dotenv
 from tqdm import tqdm
 
-# ---------------------------------------------------------------------------
-# 项目路径
-# ---------------------------------------------------------------------------
-# 从脚本所在位置向上查找项目根目录（有 .git / CLAUDE.md 的即为根）
-def _find_project_root(start: Path) -> Path:
-    for p in [start] + list(start.parents):
-        if (p / ".git").exists() or (p / "CLAUDE.md").exists():
-            return p
-    return start.parents[2]  # 回退
-
-PROJECT_ROOT = _find_project_root(Path(__file__).resolve())
-sys.path.insert(0, str(PROJECT_ROOT))
+# 运行方式：从项目根目录执行 `python -m src.rag.batch_rag_match`，
+# 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
+from config.paths import get_project_paths
+_paths = get_project_paths()
+PROJECT_ROOT = _paths.project_root
 load_dotenv(dotenv_path=str(PROJECT_ROOT / ".env.local"))
 
 logging.basicConfig(
@@ -94,7 +87,7 @@ class BatchConfig:
     input_limit: int = 0
 
     # ---- 嵌入模型 ----
-    embedding_model_path: str = r"D:\model\bge-large-zh-v1.5"
+    embedding_model_path: str = str(_paths.bge_model_path)
 
     # ---- 检索参数 ----
     top_k: int = 8

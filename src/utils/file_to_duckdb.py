@@ -24,7 +24,8 @@ logging.basicConfig(
 )
 
 
-DEFAULT_DB_PATH = r"D:\PythonProjects\Employ26\output\recruit.duckdb"
+from config.paths import get_project_paths
+DEFAULT_DB_PATH = str(get_project_paths().duckdb_path)
 
 
 def normalize_column_name(column_name: str) -> str:

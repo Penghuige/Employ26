@@ -22,8 +22,9 @@ OUTPUT_INSPECTION_FILE = r"src\bge\data5\Tier2_Threshold_Inspection.xlsx"
 OUTPUT_SUBCLASS_COVERAGE_FILE = r"src\bge\data5\Tier2_Subclass_Coverage_10each.csv"
 OUTPUT_LABEL_STUDIO_JSON = r"src\bge\data5\Tier2_Subclass_Coverage_10each.label_studio.json"
 
-# 2. 模型与推理参数
-FINETUNED_MODEL_PATH = r"D:\model\bge-base-zh-finetuned"
+# 2. 模型与推理参数（从集中路径配置获取，支持环境变量覆盖）
+from config.paths import get_project_paths
+FINETUNED_MODEL_PATH = str(get_project_paths().project_root / "models" / "bge-base-zh-finetuned")
 MATCH_THRESHOLD = 0.7  # 🏆 您可在此处随意修改阈值（如0.75, 0.78, 0.80等）
 FORCE_RECALCULATE = True  # 如果更新了原始数据或模型，将其改为 True 即可重新计算向量
 INSPECTION_SAMPLE_SIZE = 30  # 每个分数段抽取的样本量

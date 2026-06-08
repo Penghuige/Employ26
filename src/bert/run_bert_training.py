@@ -12,14 +12,13 @@ BERT 训练一键入口
     3. 评估结果写入 DuckDB
 """
 
-import sys
 import logging
-from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# 运行方式：从项目根目录执行 `python -m src.bert.run_bert_training`，
+# 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
 
 
 def step1_prepare_data():
@@ -27,7 +26,7 @@ def step1_prepare_data():
     logger.info("=" * 60)
     logger.info("步骤1/2：数据准备")
     logger.info("=" * 60)
-    from src.bert.prepare_data import main
+    from ..bert.prepare_data import main
     main()
     logger.info("步骤1 完成")
 
@@ -37,7 +36,7 @@ def step2_train():
     logger.info("=" * 60)
     logger.info("步骤2/2：BERT微调训练")
     logger.info("=" * 60)
-    from src.bert.train_bert import main
+    from ..bert.train_bert import main
     main()
     logger.info("步骤2 完成")
 

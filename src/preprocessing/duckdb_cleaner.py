@@ -3,7 +3,7 @@
 DuckDB 招聘数据清洗模块
 
 功能：
-    1. 连接 DuckDB 数据库（D:\PythonProjects\Employ26\output\recruit.duckdb）
+    1. 连接 DuckDB 数据库（路径通过 `config/paths.py` 集中管理，支持环境变量覆盖）
     2. 读取 main.recruit.{table_name}_raw_data 表
     3. 清洗"岗位描述"列：去除 HTML 标签、多余空白、特殊符号
     4. 保存到 main.recruit.{table_name}_cleaned_data 表
@@ -202,9 +202,10 @@ def clean_table(
 def main():
     """命令行入口。"""
     parser = argparse.ArgumentParser(description="DuckDB 招聘数据清洗")
+    from config.paths import get_project_paths
     parser.add_argument(
         "--db",
-        default=r"D:\PythonProjects\Employ26\output\recruit.duckdb",
+        default=str(get_project_paths().duckdb_path),
         help="DuckDB 数据库文件路径",
     )
     parser.add_argument(

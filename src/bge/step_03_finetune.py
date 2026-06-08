@@ -19,11 +19,13 @@ HARD_LABEL_FILE = r"src\bge\output\qwen3_8b_rag_labels_latest.csv"
 HARD_SAMPLE_MAX = 50000
 HARD_SAMPLE_REPEAT = 2
 
-# 2. 模型路径配置
+# 2. 模型路径配置（从集中路径配置获取，支持环境变量覆盖）
+from config.paths import get_project_paths
+_paths = get_project_paths()
 # 原始本地模型地址
-LOCAL_MODEL_PATH = r"D:\model\bge-base-zh-v1.5"
+LOCAL_MODEL_PATH = str(_paths.bge_model_path)
 # 微调后新模型的保存地址
-OUTPUT_MODEL_PATH = r"D:\model\bge-base-zh-finetuned"
+OUTPUT_MODEL_PATH = str(_paths.project_root / "models" / "bge-base-zh-finetuned")
 
 # 3. 训练参数（针对 RTX 4090 24G 显存优化）
 BATCH_SIZE = 32

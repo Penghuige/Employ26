@@ -7,11 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.utils.vllm_utils import (  # noqa: E402
+# 运行方式：从项目根目录执行 `python -m src.llm.vllm_server`，
+# 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
+from ..utils.vllm_utils import (  # noqa: E402
     DEFAULT_VLLM_CONFIG_PATH,
     build_subprocess_env,
     build_vllm_command,

@@ -9,13 +9,12 @@ import numpy as np
 import pandas as pd
 
 
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
-from src.rag.config import RAGConfig
-from src.rag.qc_utils import load_retriever, load_task_chunk_retriever, safe_str
-from src.bge.format_label_studio_requirements import format_job_requirements
+# 运行方式：从项目根目录执行 `python -m src.bge.export_tier1_label_studio`，
+# 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
+from config.paths import get_project_paths
+from ..rag.config import RAGConfig
+from ..rag.qc_utils import load_retriever, load_task_chunk_retriever, safe_str
+from ..bge.format_label_studio_requirements import format_job_requirements
 
 
 TIER2_FILE = r"src\bge\data5\Tier2_Matched_Data.csv"
@@ -28,7 +27,7 @@ RAG_KB_EXCEL = r"data\中国职业大典.xlsx"
 RAG_INDEX_PATH = r"src\rag\artifacts\occupation_index.faiss"
 RAG_TASK_INDEX_PATH = r"src\rag\artifacts\occupation_task_index.faiss"
 RAG_METADATA_PATH = r"src\rag\artifacts\occupation_metadata.json"
-RAG_EMBEDDING_MODEL = r"D:\model\bge-base-zh-finetuned"
+RAG_EMBEDDING_MODEL = str(get_project_paths().project_root / "models" / "bge-base-zh-finetuned")
 
 QUERY_BATCH_SIZE = 256
 TASK_RETRIEVE_TOP_K = 20

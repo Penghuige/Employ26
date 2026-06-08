@@ -190,14 +190,15 @@ def load_skill_extraction_config(
     cache_dir = output_dir / "cache"
     dict_dir = PROJECT_ROOT / "dicts"
     model_download_dir = PROJECT_ROOT / "models" / "hf"
+    default_llm_path = raw_config.get("model_paths", {}).get("llm", "models/Qwen3-8B")
     preferred_local_llm_path = Path(
-        skill_settings.get("preferred_local_llm_path", raw_config.get("LLM_model_path", "models/hf/Qwen2.5-14B-Instruct"))
+        skill_settings.get("preferred_local_llm_path", default_llm_path)
     )
     fallback_local_llm_paths = [
         PROJECT_ROOT / "models" / "hf" / "Qwen2.5-14B-Instruct",
         PROJECT_ROOT / "models" / "hf" / "DeepSeek-R1-Distill-Qwen-14B",
         PROJECT_ROOT / "models" / "hf" / "Qwen2.5-7B-Instruct",
-        Path(str(raw_config.get("LLM_model_path", skill_settings.get("llm_model_path", r"D:\\model\\Qwen3-8B")))),
+        PROJECT_ROOT / str(default_llm_path),
     ]
     resolved_local_llm_path = _resolve_local_model_path(preferred_local_llm_path, fallback_local_llm_paths)
 
@@ -205,12 +206,21 @@ def load_skill_extraction_config(
         project_root=PROJECT_ROOT,
         db_path=db_path,
         duckdb_threads=max(1, int(db_settings.get("duckdb_threads", 8))),
-        embedding_model_path=Path(r"D:\model\bge-base-zh-finetuned"),
+        embedding_model_path=Path(
+            raw_config.get(
+                "model_paths", {}
+            ).get(
+                "bge", "models/bge-base-zh-v1.5"
+            )
+        ),
         llm_model_path=resolved_local_llm_path,
         bert_model_path=Path(
-            raw_config.get(
-                "BERT_path",
-                skill_settings.get("bert_model_path", r"D:\model\chinese-roberta-wwm-ext"),
+            raw_config.get("model_paths", {}).get(
+                "bert",
+                raw_config.get(
+                    "BERT_path",
+                    skill_settings.get("bert_model_path", "models/chinese-roberta-wwm-ext"),
+                ),
             )
         ),
         preferred_local_llm_path=preferred_local_llm_path,

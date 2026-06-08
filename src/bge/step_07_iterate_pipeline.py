@@ -14,20 +14,16 @@ from datetime import datetime
 
 import pandas as pd
 
-# ---------------------------------------------------------------------------
-# 将项目根目录加入 sys.path
-# ---------------------------------------------------------------------------
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
+# 运行方式：从项目根目录执行 `python -m src.bge.step_07_iterate_pipeline`，
+# 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
 
 # ---------------------------------------------------------------------------
 # 导入各步骤的主函数（复用已有模块，不重复写逻辑）
 # ---------------------------------------------------------------------------
-from src.bge.D4_T2match import main_tier2_retrieval          # D4
-from src.bge.D5_qwen3_auto_label import run_auto_labeling    # D5
-from src.bge.D3_finetune import train_finetuned_model        # D3
-from src.bge.D6_threshold_eval import build_threshold_report  # D6
+from ..bge.step_04_tier2_match import main_tier2_retrieval          # D4
+from ..bge.step_05_qwen3_auto_label import run_auto_labeling    # D5
+from ..bge.step_03_finetune import train_finetuned_model        # D3
+from ..bge.step_06_threshold_eval import build_threshold_report  # D6
 
 # ---------------------------------------------------------------------------
 # 迭代控制配置
@@ -96,7 +92,7 @@ def run_one_round(round_idx: int, force_recalc: bool) -> float:
     # ---- Step 1: D4 全量打分（新模型后须强制重算）----
     _banner(f"Round {round_idx} | Step 1/4: D4 全量向量检索")
     # 临时覆盖 D4 模块级配置，使其强制重算
-    import src.bge.D4_T2match as _d4
+    import src.bge.step_04_tier2_match as _d4
     _orig_force = _d4.FORCE_RECALCULATE
     _d4.FORCE_RECALCULATE = force_recalc
     try:

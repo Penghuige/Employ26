@@ -1,6 +1,25 @@
+# 项目数据库与模型配置
+# 数据库统一使用 PostgreSQL。除报告类文本外，所有源数据和中间处理结果均存入 PG。
+#
+# 环境变量覆盖（优先级高于本文件）:
+#   EMPLOYDATA_PG_HOST     — PostgreSQL 主机地址
+#   EMPLOYDATA_PG_PORT     — PostgreSQL 端口
+#   EMPLOYDATA_PG_DBNAME   — 数据库名
+#   EMPLOYDATA_PG_USER     — 用户名
+#   EMPLOYDATA_PG_PASSWORD — 密码
+#   EMPLOYDATA_BGE_MODEL_PATH — BGE embedding 模型路径
+#   EMPLOYDATA_QWEN_MODEL_PATH — Qwen LLM 模型路径
+#   EMPLOYDATA_BERT_MODEL_PATH — BERT 模型路径
+
 database:
-  duckdb_path: output/recruit.duckdb
-  duckdb_threads: 32
+  # ── PostgreSQL 连接参数 ──
+  host: localhost
+  port: 5432
+  dbname: employ26
+  user: postgres
+  password: ""
+  # schema 前缀（所有数据表统一放在此 schema 下）
+  schema: recruit
 
 job_title_parsing:
   catalog_table: recruit.main.chinese_occupational_dictionary_joined
@@ -13,8 +32,10 @@ skill_extraction:
 
 raw_database: recruit.raw_data.lieping_raw_data, recruit.raw_data.qcwu_raw_data, recruit.raw_data.zhilian_raw_data
 
-LLM_model_path: D:/model/Qwen3-8B
-BERT_path: D:/model/chinese-roberta-wwm-ext
+model_paths:
+  llm: models/Qwen3-8B
+  bge: models/bge-base-zh-v1.5
+  bert: models/chinese-roberta-wwm-ext
 
 API_URL: https://api.ofox.ai/v1/chat/completions
 APi_KEY: sk-of-SaWCFPkLtxICvozTZLrMHpjHwMrxCwfNeKctuwZJilobzlyTZhEPfyhXzbXMaKwC

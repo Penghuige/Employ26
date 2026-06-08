@@ -23,16 +23,11 @@ from rapidfuzz import fuzz, process
 from tqdm import tqdm
 from tqdm.auto import tqdm as tqdm_auto
 
-# -----------------------------------------------------------------------
-# 将项目根目录加入 sys.path，使 src.* 包可被正确导入
-# -----------------------------------------------------------------------
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
-from src.preprocessing.parse_desc import parse_desc_df
-from src.rag.config import RAGConfig
-from src.rag.qc_utils import (
+# 运行方式：从项目根目录执行 `python -m src.bge.step_02_filter`，
+# 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
+from ..preprocessing.parse_desc import parse_desc_df
+from ..rag.config import RAGConfig
+from ..rag.qc_utils import (
     batched_generate,
     build_qc_prompt,
     build_rag_context,
@@ -43,7 +38,7 @@ from src.rag.qc_utils import (
     normalize_label,
     safe_str,
 )
-from src.rag.retriever import OccupationRetriever
+from ..rag.retriever import OccupationRetriever
 
 # =============================================================================
 # 配置区域
@@ -68,14 +63,16 @@ RAG_KB_EXCEL = r"data\中国职业大典.xlsx"
 RAG_INDEX_PATH = r"src\rag\artifacts\occupation_index.faiss"
 RAG_TASK_INDEX_PATH = r"src\rag\artifacts\occupation_task_index.faiss"
 RAG_METADATA_PATH = r"src\rag\artifacts\occupation_metadata.json"
-RAG_EMBEDDING_MODEL = r"D:\model\bge-base-zh-v1.5"
+from config.paths import get_project_paths
+_paths = get_project_paths()
+RAG_EMBEDDING_MODEL = str(_paths.bge_model_path)
 RAG_TOP_K = 3
 RAG_QUERY_BATCH_SIZE = 256
 RAG_MATCH_MODE = "compare"  # legacy | parsed_adaptive_task | compare
 RAG_SCORE_TIE_DELTA = 0.005
 
 # ---- 5. Qwen3 质检参数（RTX 4090 24G）----
-QWEN_MODEL_PATH = r"D:\model\Qwen3-8B"
+QWEN_MODEL_PATH = str(_paths.qwen_model_path)
 QWEN_DTYPE = "bfloat16"
 QWEN_DEVICE_MAP = "auto"
 INFER_BATCH_SIZE = 16

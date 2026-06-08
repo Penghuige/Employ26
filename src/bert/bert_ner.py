@@ -1,22 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# bert_ner.py - BERT命名实体识别训练脚本
-#
-# 功能：从招聘JD文本中提取职位名称(TITLE)和技能词(SKILL)
-#
-# 模块结构：
-#   STEP 1  auto_bio_label / build_bio_dataset  自动生成字符级BIO标注
-#   STEP 2  NERDataset                          子词对齐，转换为BERT输入
-#   STEP 3  evaluate_ner / train_ner            微调训练 + seqeval评估
-#   STEP 4  NERPredictor / check_data / main    推理和工具函数
-#
-# 标签体系(BIO格式):
-#   O=非实体  B-TITLE/I-TITLE=职位  B-SKILL/I-SKILL=技能
-#
-# 用法:
-#   python src/bert/bert_ner.py --check-data  # 验证BIO标注
-#   python src/bert/bert_ner.py --train       # 训练
-#   python src/bert/bert_ner.py --predict "文本"  # 推理
+"""BERT 命名实体识别训练与推理模块。
+
+从招聘JD文本中提取职位名称（TITLE）和技能词（SKILL），
+基于 character-level BIO 标注 + BERT token classification 的端到端流水线。
+
+流水线步骤:
+    1. auto_bio_label / build_bio_dataset — 自动生成字符级BIO标注
+    2. NERDataset — 子词对齐，转换为 BERT 输入格式
+    3. evaluate_ner / train_ner — 微调训练 + seqeval 实体级 F1 评估
+    4. NERPredictor / check_data / main — 推理和工具函数
+
+标签体系（BIO格式）:
+    O=非实体, B-TITLE/I-TITLE=职位, B-SKILL/I-SKILL=技能
+
+用法:
+    python -m src.bert.bert_ner --check-data  # 验证BIO标注
+    python -m src.bert.bert_ner --train       # 训练
+    python -m src.bert.bert_ner --predict "文本"  # 推理
+"""
 import os
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 import json

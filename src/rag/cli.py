@@ -65,7 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     query_p.add_argument("--title", required=True, help="岗位名称")
     query_p.add_argument("--requirements", default="", help="岗位要求描述")
     query_p.add_argument("--top-k", type=int, default=8)
-    query_p.add_argument("--embedding-model", default=r"D:\model\bge-large-zh-v1.5")
+    from config.paths import get_project_paths
+    query_p.add_argument("--embedding-model", default=str(get_project_paths().bge_model_path))
 
     # judge
     judge_p = sub.add_parser("judge", help="给定候选列表，DeepSeek 评判")

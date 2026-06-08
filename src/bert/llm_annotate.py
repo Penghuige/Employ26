@@ -299,7 +299,7 @@ def entities_to_bio(text: str, entities: list) -> list:
     Returns:
         [(char, label), ...]
     
-    ""
+    """
     labels = ['O'] * len(text)
     for ent in sorted(entities, key=lambda e: len(e['text']), reverse=True):
         etext = ent['text']

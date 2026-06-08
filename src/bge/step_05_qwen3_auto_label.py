@@ -31,15 +31,10 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-# -----------------------------------------------------------------------
-# 将项目根目录加入 sys.path，使 src.rag 包可被正确导入
-# -----------------------------------------------------------------------
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
-from src.rag.config import RAGConfig
-from src.rag.qc_utils import (
+# 运行方式：从项目根目录执行 `python -m src.bge.step_05_qwen3_auto_label`，
+# 确保 src.* 包可通过标准 Python 模块搜索路径正确导入。
+from ..rag.config import RAGConfig
+from ..rag.qc_utils import (
     build_qc_prompt,
     build_rag_context,
     batched_generate,
@@ -55,7 +50,9 @@ from src.rag.qc_utils import (
 # =============================================================================
 
 # ---- 1. Qwen3 模型配置（RTX 4090 24G）----
-MODEL_PATH = r"D:\model\Qwen3-8B"
+from config.paths import get_project_paths
+_paths = get_project_paths()
+MODEL_PATH = str(_paths.qwen_model_path)
 TORCH_DTYPE = "bfloat16"   # 4090 支持 bfloat16，比 float16 数值更稳定
 DEVICE_MAP = "auto"        # 自动分配显卡，单卡直接全量加载
 
@@ -99,7 +96,7 @@ TOP_P = 1.0
 RAG_KB_EXCEL = r"data\中国职业大典.xlsx"
 RAG_INDEX_PATH = r"src\rag\artifacts\occupation_index.faiss"
 RAG_METADATA_PATH = r"src\rag\artifacts\occupation_metadata.json"
-RAG_EMBEDDING_MODEL = r"D:\model\bge-base-zh-finetuned"
+RAG_EMBEDDING_MODEL = str(_paths.project_root / "models" / "bge-base-zh-finetuned")
 RAG_TOP_K = 5              # 降低：5 -> 3，减少 prompt 长度约 160 token/条
 
 # ---- 5. 输出文件配置 ----

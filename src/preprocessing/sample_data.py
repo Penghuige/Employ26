@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Optional
 
 # 默认 DuckDB 数据库路径（原始数据）
-DEFAULT_DB_PATH = r"D:\PythonProjects\Employ26\output\recruit.duckdb"
+from config.paths import get_project_paths
+DEFAULT_DB_PATH = str(get_project_paths().duckdb_path)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
