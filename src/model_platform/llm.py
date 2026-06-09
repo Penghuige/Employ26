@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import logging
 import time
 from typing import Any, Protocol, Sequence, Tuple

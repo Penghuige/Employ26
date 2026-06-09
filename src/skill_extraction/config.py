@@ -95,6 +95,7 @@ class SkillExtractionConfig:
     catalog_preprocessed_table: str
     jobs_tables: List[str]
     requirement_match_table: str
+    recruitment_normalized_table: str
     output_dir: Path
     prompt_train_dir: Path
     prompt_supplement_dir: Path
@@ -244,6 +245,12 @@ def load_skill_extraction_config(
             skill_settings.get(
                 "requirement_match_table",
                 "public.skill_extraction_requirement_matches",
+            )
+        ),
+        recruitment_normalized_table=qualify_table_name(
+            raw_config.get("tables", {}).get("processing_results", {}).get(
+                "recruitment_jobs_normalized",
+                "public.recruitment_jobs_normalized",
             )
         ),
         output_dir=output_dir,

@@ -140,7 +140,7 @@ def main() -> None:
     # ── 按 task_id 索引人工标注 ──
     human_data: dict[int, dict[str, Any]] = {}
     for item in raw_data:
-        tid = item["id"]
+        tid = item["task_id"]
         choices = []
         for ann in item["annotations"]:
             c = parse_human_choice(ann)
@@ -148,6 +148,7 @@ def main() -> None:
         human_data[tid] = {
             "annotations": choices,
             "data": item["data"],
+            "recruitment_record_id": item["recruitment_record_id"],
             "n_annotators": len(item["annotations"]),
         }
 

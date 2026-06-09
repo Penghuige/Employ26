@@ -329,7 +329,7 @@ class FlatSkillPipeline:
         """加载岗位数据并按职业中类分组采样。
 
         执行流程:
-            1. 调用 ``prepare_requirement_matches_to_duckdb`` 将岗位与职业分类匹配。
+            1. 调用 ``prepare_requirement_matches_to_postgres`` 将岗位与职业分类匹配。
             2. 提取每行的需求文本（任职要求或匹配文本）。
             3. 按「中类」分组。
             4. 对每个中类随机采样 ``train_size`` 条训练文本和
@@ -355,11 +355,11 @@ class FlatSkillPipeline:
             FileNotFoundError: 数据库文件不存在时抛出。
         """
         from src.data_pipeline.requirement_match_prep import (
-            prepare_requirement_matches_to_duckdb,
+            prepare_requirement_matches_to_postgres,
         )
 
         logger.info("正在加载岗位数据并匹配职业分类...")
-        matched_df = prepare_requirement_matches_to_duckdb(
+        matched_df = prepare_requirement_matches_to_postgres(
             config=self.config,
             limit_job_rows=limit_job_rows,
             parse_workers=max(1, parse_workers),

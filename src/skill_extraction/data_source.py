@@ -2,7 +2,7 @@
 职业细类采样数据访问模块。
 
 职责：
-1. 从 DuckDB 读取招聘样本；
+1. 从 PostgreSQL 统一规范层读取招聘记录；
 2. 使用 BGE 模型将岗位匹配到职业细类；
 3. 生成训练集和验证池清单；
 4. 按需回查某一批样本的原始岗位描述。
@@ -16,6 +16,7 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 
+from src.db.recruitment_jobs_normalized import load_normalized_jobs_dataframe
 from .bge_matcher import OccupationBGEMatcher
 from .config import SkillExtractionConfig
 
@@ -52,40 +53,17 @@ class OccupationSampleBuilder:
         return self._matcher
 
     def load_jobs(self, limit_job_rows: int | None = None) -> pd.DataFrame:
-        """加载招聘样本表。"""
-        try:
-            import duckdb
-        except ImportError as exc:
-            raise ImportError("缺少 duckdb 依赖，无法读取招聘样本。") from exc
-
-        logger.info("开始加载招聘样本表")
-        frames: List[pd.DataFrame] = []
-
-        with duckdb.connect(str(self.config.db_path)) as conn:
-            conn.execute(f"PRAGMA threads={self.config.duckdb_threads}")
-            for table_name in self.config.jobs_tables:
-                query = f"""
-                    SELECT
-                        *,
-                        ROW_NUMBER() OVER () AS __source_row_number
-                    FROM {table_name}
-                """
-                if limit_job_rows is not None:
-                    query += f" LIMIT {int(limit_job_rows)}"
-                frame = conn.execute(query).df()
-                frame["__source_table"] = table_name
-                frames.append(frame)
-                logger.info("已加载 %s: %s 行", table_name, len(frame))
-
-        jobs_df = pd.concat(frames, axis=0, ignore_index=True) if frames else pd.DataFrame()
+        """从统一规范层加载招聘记录。"""
+        logger.info("开始加载统一规范层招聘记录")
+        jobs_df = load_normalized_jobs_dataframe(table_name=self.config.recruitment_normalized_table)
         if jobs_df.empty:
-            raise ValueError("未从 DuckDB 读取到招聘样本数据")
-
-        jobs_df["sample_row_id"] = (
-            jobs_df["__source_table"].astype(str)
-            + ":"
-            + jobs_df["__source_row_number"].astype(str)
-        )
+            raise ValueError("统一规范层中没有可用招聘记录")
+        if limit_job_rows is not None:
+            jobs_df = jobs_df.head(int(limit_job_rows)).copy()
+        jobs_df["岗位名称"] = jobs_df["job_title"].fillna("").astype(str)
+        jobs_df["岗位描述"] = jobs_df["job_description_raw"].fillna("").astype(str)
+        jobs_df["__source_table"] = jobs_df["source_table"].fillna("").astype(str)
+        jobs_df["__source_row_number"] = jobs_df["source_row_number"]
         return jobs_df
 
     def match_jobs(
@@ -119,7 +97,7 @@ class OccupationSampleBuilder:
             [
                 jobs_df[
                     [
-                        "sample_row_id",
+                        "recruitment_record_id",
                         "__source_table",
                         "__source_row_number",
                         "岗位名称",
@@ -199,7 +177,7 @@ class OccupationSampleBuilder:
             for order, row in enumerate(train_part.to_dict(orient="records"), start=1):
                 manifest_rows.append(
                     {
-                        "sample_row_id": row["sample_row_id"],
+                        "recruitment_record_id": row["recruitment_record_id"],
                         "source_table": row["__source_table"],
                         "source_row_number": int(row["__source_row_number"]),
                         "岗位名称": row["岗位名称"],
@@ -222,7 +200,7 @@ class OccupationSampleBuilder:
             for order, row in enumerate(validation_part.to_dict(orient="records"), start=1):
                 manifest_rows.append(
                     {
-                        "sample_row_id": row["sample_row_id"],
+                        "recruitment_record_id": row["recruitment_record_id"],
                         "source_table": row["__source_table"],
                         "source_row_number": int(row["__source_row_number"]),
                         "岗位名称": row["岗位名称"],
@@ -251,48 +229,18 @@ class OccupationSampleBuilder:
         return summary_df, manifest_df
 
     def fetch_rows_by_manifest(self, manifest_df: pd.DataFrame) -> pd.DataFrame:
-        """根据采样清单回查原始岗位描述。"""
-        try:
-            import duckdb
-        except ImportError as exc:
-            raise ImportError("缺少 duckdb 依赖，无法回查岗位描述。") from exc
-
+        """根据采样清单回查统一规范层中的岗位描述。"""
         if manifest_df.empty:
             return pd.DataFrame()
 
-        frames: List[pd.DataFrame] = []
-        with duckdb.connect(str(self.config.db_path)) as conn:
-            conn.execute(f"PRAGMA threads={self.config.duckdb_threads}")
-            for source_table, group in manifest_df.groupby("source_table", sort=False):
-                row_numbers = ",".join(str(int(value)) for value in group["source_row_number"].tolist())
-                query = f"""
-                    WITH numbered_jobs AS (
-                        SELECT
-                            *,
-                            ROW_NUMBER() OVER () AS __source_row_number
-                        FROM {source_table}
-                    )
-                    SELECT
-                        *
-                    FROM numbered_jobs
-                    WHERE __source_row_number IN ({row_numbers})
-                """
-                frame = conn.execute(query).df()
-                frame["source_table"] = source_table
-                frames.append(frame)
-
-        raw_df = pd.concat(frames, axis=0, ignore_index=True) if frames else pd.DataFrame()
+        raw_df = load_normalized_jobs_dataframe(table_name=self.config.recruitment_normalized_table)
         if raw_df.empty:
             return raw_df
-
-        raw_df["sample_row_id"] = (
-            raw_df["source_table"].astype(str)
-            + ":"
-            + raw_df["__source_row_number"].astype(str)
-        )
+        raw_df["source_table"] = raw_df["source_table"].fillna("").astype(str)
+        raw_df["source_row_number"] = raw_df["source_row_number"].astype(int)
         return manifest_df.merge(
             raw_df,
-            on="sample_row_id",
+            on="recruitment_record_id",
             how="left",
             suffixes=("", "_raw"),
         )

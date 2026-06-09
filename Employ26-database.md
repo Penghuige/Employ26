@@ -176,18 +176,19 @@
 - `public.match_training_features.task_id` 共 `18606` 条，且全部唯一
 - `public.rag_match_results_v2.task_id` 共 `10` 条，且全部唯一
 
-### 6.2 `row_id`
+### 6.2 `row_id`（历史快照链路）
 
-主要用于标注任务和原始 JD 数据对齐：
+主要用于把历史标注任务回放到当年的 Label Studio 导出快照：
 
 - `annotations.label_studio_tasks_v2.row_id`
-- `public.jd_raw.row_id`
+- `output/data5/Tier2_Matched_Data.csv` 前 30 行
+- `output/data5/Tier3_Pending_Data.csv` 全量
 
 实测情况：
 
 - `annotations.label_studio_tasks_v2` 共 `18611` 条任务
-- 其中有 `18260` 条能对上 `public.jd_raw.row_id`
-- `row_id` 目前是标注任务回溯原始 JD 的最重要键
+- `row_id` 范围为 `0` 到 `59999`，与历史导出快照行号空间一致
+- 它不应再作为招聘源记录主键使用；正式招聘身份应以回填后的 `recruitment_record_id` 为准
 
 ### 6.3 `code`
 
@@ -201,7 +202,7 @@
 - `public.skill_extraction_requirement_matches.top1_code`
 - `public.skill_extraction_requirement_matches.occupation_code`
 
-### 6.4 `sample_row_id + __source_table`
+### 6.4 `sample_row_id + __source_table`（历史技能链路）
 
 主要用于技能抽取类结果回溯样本来源：
 
@@ -211,8 +212,8 @@
 
 实测情况：
 
-- `public.skill_extraction_requirement_matches` 的 `sample_row_id` 全部非空，且 `( __source_table, sample_row_id )` 唯一
-- `public.hard_skill_match_summary_dev` 的 `sample_row_id` 全部非空，且 `( __source_table, sample_row_id )` 唯一
+- `public.skill_extraction_requirement_matches` 的历史版本使用 `sample_row_id`
+- `public.hard_skill_match_summary_dev` 的历史版本使用 `sample_row_id`
 - `public.hard_skill_match_details_dev` 共有 `23` 条明细，但只对应 `7` 个源样本，属于一对多明细表
 
 ## 7. 推荐 Join 路径
@@ -456,7 +457,8 @@ join public.jd_raw j
 - 字段数：`32`
 - 用途：第二轮标注任务主表
 - `id` 当前为 task 主键
-- `row_id` 可回溯 `public.jd_raw`，已补充查询索引
+- `row_id` 是历史 Label Studio 导出快照中的行号，不应再视为招聘源表主键
+- `recruitment_record_id` 用于承接历史任务回填后的正式招聘记录身份
 - `annotations_completed` 和 `data_raw` 仍保留 `text` 原字段，并已新增 `annotations_completed_jsonb` 和 `data_raw_jsonb`
 - `created_at`、`updated_at` 仍保留原始文本，并已新增 `created_at_ts`、`updated_at_ts`
 
@@ -464,6 +466,7 @@ join public.jd_raw j
 
 - `id`
 - `row_id`
+- `recruitment_record_id`
 - `sample_source`
 - `job_title`
 - `job_requirements`
@@ -533,6 +536,29 @@ join public.jd_raw j
 - `deepseek_raw_response`
 - `candidates`
 - `payload`
+
+#### `annotations.label_studio_task_rrid_backfill_audit`
+
+- 用途：历史标注任务 `recruitment_record_id` 回填审计表
+- 定位：一次性治理后的长期审计留痕
+- 主键：`task_id`
+
+关键字段：
+
+- `task_id`
+- `historical_row_id`
+- `mapping_status`
+- `mapping_rule`
+- `confidence_tier`
+- `source_table`
+- `source_row_number`
+- `recruitment_record_id`
+- `candidate_count`
+- `best_similarity_score`
+- `second_similarity_score`
+- `evidence_summary`
+- `backfill_version`
+- `backfilled_at`
 
 ### 8.5 `public` schema
 
@@ -672,14 +698,14 @@ join public.jd_raw j
 - 用途：岗位描述结构化解析结果表，由 `src.data_pipeline.description_parsing` 写入
 - 定位：解析特征层，不替代三平台原始表，也不继续复制整张 `cleaned_data`
 - 列名：统一使用英文列名，作为后续新流程公共接口
-- 唯一键：`(source_table, source_row_number, parser_version)`
+- 当前唯一键：`recruitment_record_id`
 
 关键字段：
 
 - `source_platform`
+- `recruitment_record_id`
 - `source_table`
 - `source_row_number`
-- `source_record_id`
 - `job_title`
 - `job_description_raw`
 - `job_description_clean`
@@ -701,9 +727,10 @@ join public.jd_raw j
 
 说明：
 
-- `source_table + source_row_number` 用于回溯原始平台表或样本表
+- `recruitment_record_id` 是当前权威解析结果的标准身份字段
+- `source_table + source_row_number` 保留为溯源字段，用于回溯原始平台表或统一规范层来源位置
 - `description_sections` 保存完整切分 JSON，`requirements_text` / `duties_text` 保存高频检索文本
-- `parser_version` 用于支持后续解析规则升级后的并行重跑
+- `parser_version` 保留为结果元数据，不再参与公共身份定义
 
 #### 技能抽取类表
 
@@ -715,10 +742,10 @@ join public.jd_raw j
 
 关键字段分组：
 
-- 样本定位：
-  - `sample_row_id`
-  - `__source_table`
-  - `__source_row_number`
+- 标准引用与溯源：
+  - `recruitment_record_id`
+  - `source_table`
+  - `source_row_number`
 - 文本字段：
   - `岗位名称`
   - `岗位描述`
@@ -746,11 +773,10 @@ join public.jd_raw j
   - `top1_detail_path` ~ `top5_detail_path`
   - `top1_detail_name` ~ `top5_detail_name`
 
-来源表分布：
+说明：
 
-- `recruit.main.gd_recruit_qcwy_sample`: `45512`
-- `recruit.main.zhilian_guangdong_sample`: `38379`
-- `recruit.main.gd_recruit_liepin_sample`: `20047`
+- 当前活跃公共链路应以 `recruitment_record_id` 作为标准引用字段
+- `source_table` / `source_row_number` 仅用于来源回溯
 
 ##### `public.hard_skill_match_results_dev`
 
@@ -912,8 +938,9 @@ left join public.occ_dict_detailed d
 
 ```sql
 select
-    sample_row_id,
-    __source_table,
+    recruitment_record_id,
+    source_table,
+    source_row_number,
     岗位名称,
     occupation_code,
     occupation_title,
@@ -922,7 +949,7 @@ select
     top1_title,
     top1_score
 from public.skill_extraction_requirement_matches
-where __source_table = 'recruit.main.gd_recruit_qcwy_sample';
+where source_table = '"51job".sample';
 ```
 
 ### 9.7 查看岗位描述解析结果并回溯来源
@@ -930,9 +957,9 @@ where __source_table = 'recruit.main.gd_recruit_qcwy_sample';
 ```sql
 select
     source_platform,
+    recruitment_record_id,
     source_table,
     source_row_number,
-    source_record_id,
     job_title,
     requirements_text,
     duties_text,
@@ -948,7 +975,7 @@ limit 100;
 
 ```sql
 select
-    source_record_id,
+    recruitment_record_id,
     description_sections -> 'sections' as sections
 from public.job_description_parsed
 where description_sections ? 'sections'
@@ -1089,6 +1116,7 @@ on public.jd_raw (row_id);
 4. 建立招聘统一规范入口
    - 保留 `51job`、`Liepin`、`Zhilian` 三个原始 schema 作为平台镜像
    - 新增 `public.recruitment_jobs_normalized` 或 `recruitment.jobs` 作为跨平台分析入口
+   - 使用 `recruitment_record_id` 作为标准身份字段
    - 使用 `source_platform`、`source_table`、`source_row_number` 保留溯源能力
 
 5. 将岗位描述解析结果作为公共特征层

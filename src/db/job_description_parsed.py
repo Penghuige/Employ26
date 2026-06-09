@@ -35,6 +35,12 @@ def split_table_name(table_name: str) -> tuple[str, str]:
     return schema.strip().strip('"'), table.strip().strip('"')
 
 
+def quote_table_name(table_name: str) -> str:
+    """返回安全双引号包裹的 PostgreSQL 表名。"""
+    schema_name, raw_table_name = split_table_name(table_name)
+    return f'"{schema_name}"."{raw_table_name}"'
+
+
 def ensure_job_description_parsed_table(
     connection,
     table_name: str = DEFAULT_PARSED_TABLE,
@@ -49,10 +55,10 @@ def ensure_job_description_parsed_table(
         text(
             f"""
             CREATE TABLE IF NOT EXISTS {qualified_table} (
+                recruitment_record_id text PRIMARY KEY,
                 source_platform text NOT NULL,
                 source_table text NOT NULL,
                 source_row_number bigint NOT NULL,
-                source_record_id text,
                 job_title text,
                 job_description_raw text,
                 job_description_clean text,
@@ -64,9 +70,7 @@ def ensure_job_description_parsed_table(
                 rag_query_text text,
                 rag_query_source text,
                 parser_version text NOT NULL,
-                parsed_at timestamptz NOT NULL DEFAULT now(),
-                CONSTRAINT {object_prefix}_source_version_uk
-                    UNIQUE (source_table, source_row_number, parser_version)
+                parsed_at timestamptz NOT NULL DEFAULT now()
             )
             """
         )
@@ -162,15 +166,17 @@ def build_parsed_pg_rows(
     platform = source_platform or infer_source_platform(source_table)
     rows: list[dict[str, object]] = []
     for fallback_index, (_, row) in enumerate(parsed_df.iterrows(), start=1):
+        recruitment_record_id = _safe_text(row.get("recruitment_record_id"))
+        if not recruitment_record_id:
+            raise KeyError("缺少 recruitment_record_id，无法写入岗位描述解析结果。")
         source_row_number = _safe_int(row.get("__source_row_number"), fallback_index)
-        source_record_id = _safe_text(row.get("sample_row_id"), f"{source_table}:{source_row_number}")
         sections_json = _safe_text(row.get(DESCRIPTION_SECTIONS_JSON_COL), "{}")
         rows.append(
             {
+                "recruitment_record_id": recruitment_record_id,
                 "source_platform": platform,
                 "source_table": source_table,
                 "source_row_number": source_row_number,
-                "source_record_id": source_record_id,
                 "job_title": _safe_text(row.get(title_col)),
                 "job_description_raw": _safe_text(row.get(desc_col)),
                 "job_description_clean": _safe_text(row.get(JOB_DESCRIPTION_CLEAN_COL)),
@@ -205,7 +211,7 @@ def write_parsed_rows_to_postgres(
     update_sql = ", ".join(
         f"{column} = EXCLUDED.{column}"
         for column in PG_COLUMN_ORDER
-        if column not in {"source_table", "source_row_number", "parser_version"}
+        if column not in {"recruitment_record_id"}
     )
 
     engine = create_pg_engine()
@@ -216,7 +222,7 @@ def write_parsed_rows_to_postgres(
                 f"""
                 INSERT INTO {qualified_table} ({columns_sql})
                 VALUES ({values_sql})
-                ON CONFLICT (source_table, source_row_number, parser_version)
+                ON CONFLICT (recruitment_record_id)
                 DO UPDATE SET
                     {update_sql},
                     parsed_at = now()

@@ -150,7 +150,8 @@ def main() -> None:
     # 逐任务计算分歧分析特征。
     records: list[dict[str, Any]] = []
     for item in raw_data:
-        tid = item["id"]
+        tid = item["task_id"]
+        recruitment_record_id = item["recruitment_record_id"]
         data = item["data"]
         anns = item["annotations"]
         n_ann = len(anns)
@@ -248,7 +249,7 @@ def main() -> None:
                 hum_picked_top1 = True
 
         records.append({
-            "task_id": tid, "job_title": jt, "job_reqs": jr[:150],
+            "task_id": tid, "recruitment_record_id": recruitment_record_id, "job_title": jt, "job_reqs": jr[:150],
             "n_ann": n_ann, "has_majority": has_majority,
             "hum_choice": hum_choice, "hum_code": hum_code, "hum_title": hum_title,
             "ds_choice": ds_choice, "ds_code": ds_code, "ds_title": ds_title,

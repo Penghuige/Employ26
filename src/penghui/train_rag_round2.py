@@ -21,12 +21,15 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
-import time
 import random
+import re
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -49,9 +52,21 @@ BASE_DIR = str(_project.project_root)
 
 OUTPUT_DIR = str(get_training_output_dir())
 
-# 模型路径
-BASE_MODEL_PATH = resolve_base_model_path()
-OUTPUT_MODEL_PATH = os.path.join(OUTPUT_DIR, "bge-large-round2-finetuned")
+DEFAULT_BASE_MODEL_PATH = resolve_base_model_path()
+DEFAULT_OUTPUT_MODEL_NAME = "bge-large-round2-finetuned"
+DEFAULT_RESULT_FILE_NAME = "evaluation_results.json"
+
+
+@dataclass(frozen=True)
+class RunSettings:
+    """单次训练运行的路径与命名配置。"""
+
+    base_model_path: str
+    output_model_name: str
+    output_model_path: str
+    run_label: str | None
+    result_file_name: str
+    result_file_path: str
 
 # ── 训练参数 ────────────────────────────────────────
 @dataclass
@@ -67,6 +82,81 @@ class TrainConfig:
     random_seed: int = 42
     # 是否仅用多标注任务作为测试集（更严格的评估）
     use_multi_ann_as_test: bool = True
+
+
+def _slugify_name(value: str) -> str:
+    """将运行标签转换为适合文件名使用的形式。"""
+    cleaned = re.sub(r"[^0-9A-Za-z]+", "_", value).strip("_")
+    return cleaned or "run"
+
+
+def _same_path(left: str, right: str) -> bool:
+    """判断两个路径是否指向同一路径。"""
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except Exception:
+        return left == right
+
+
+def parse_args() -> argparse.Namespace:
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser(
+        description="运行 Penghui v1 检索基线训练，支持单变量底座挑战。",
+    )
+    parser.add_argument(
+        "--base-model-path",
+        help="覆盖基础 embedding 模型路径；第一轮挑战时仅允许替换这一项。",
+    )
+    parser.add_argument(
+        "--output-model-name",
+        help=(
+            "输出模型目录名。默认保持历史基线目录；"
+            "若切换基础模型，建议显式传入新目录名，例如 v1-bge-m3。"
+        ),
+    )
+    parser.add_argument(
+        "--run-label",
+        help=(
+            "运行标签，用于结果文件命名。"
+            "例如 v1-bge-m3 会生成 evaluation_v1_bge_m3.json。"
+        ),
+    )
+    return parser.parse_args()
+
+
+def build_run_settings(args: argparse.Namespace) -> RunSettings:
+    """根据命令行参数构造单次运行设置。"""
+    base_model_path = args.base_model_path or DEFAULT_BASE_MODEL_PATH
+    output_model_name = args.output_model_name or DEFAULT_OUTPUT_MODEL_NAME
+
+    if args.base_model_path and not args.output_model_name and not _same_path(
+        base_model_path,
+        DEFAULT_BASE_MODEL_PATH,
+    ):
+        raise SystemExit(
+            "使用新的 --base-model-path 时，必须同时传入 --output-model-name，"
+            "以避免覆盖已冻结的基线产物。"
+        )
+
+    derived_run_label = args.run_label
+    if not derived_run_label and output_model_name != DEFAULT_OUTPUT_MODEL_NAME:
+        derived_run_label = output_model_name
+
+    if derived_run_label:
+        result_file_name = f"evaluation_{_slugify_name(derived_run_label)}.json"
+    else:
+        result_file_name = DEFAULT_RESULT_FILE_NAME
+
+    output_model_path = os.path.join(OUTPUT_DIR, output_model_name)
+    result_file_path = os.path.join(OUTPUT_DIR, result_file_name)
+    return RunSettings(
+        base_model_path=base_model_path,
+        output_model_name=output_model_name,
+        output_model_path=output_model_path,
+        run_label=derived_run_label,
+        result_file_name=result_file_name,
+        result_file_path=result_file_path,
+    )
 
 
 # ── 辅助函数 ────────────────────────────────────────
@@ -152,7 +242,8 @@ def extract_training_pairs(
     skipped_no_text = 0
 
     for item in raw_data:
-        task_id = item["id"]
+        task_id = item["task_id"]
+        recruitment_record_id = item["recruitment_record_id"]
         data = item["data"]
         job_title = str(data.get("job_title", "")).strip()
         job_reqs = str(data.get("job_requirements_clean", "")).strip()
@@ -203,6 +294,7 @@ def extract_training_pairs(
 
         pair = {
             "task_id": task_id,
+            "recruitment_record_id": recruitment_record_id,
             "anchor": anchor,
             "positive": positive_text,
             "code": code,
@@ -302,18 +394,19 @@ def split_train_test(
 def train_model(
     train_examples: list[InputExample],
     config: TrainConfig,
+    run_settings: RunSettings,
 ) -> SentenceTransformer:
-    """使用 MultipleNegativesRankingLoss 微调 BGE-M3。"""
+    """使用 MultipleNegativesRankingLoss 微调当前基础模型。"""
     print("\n" + "=" * 70)
-    print("[Step 3] 微调 BGE-M3 模型")
+    print("[Step 3] 微调检索模型")
     print("=" * 70)
 
     device = get_runtime_device()
     print(f"  设备: {device}")
-    print(f"  基础模型: {BASE_MODEL_PATH}")
+    print(f"  基础模型: {run_settings.base_model_path}")
 
     # 加载模型
-    model = SentenceTransformer(BASE_MODEL_PATH, device=device)
+    model = SentenceTransformer(run_settings.base_model_path, device=device)
     model.max_seq_length = config.max_seq_length
     print(f"  最大序列长度: {config.max_seq_length}")
     print(f"  嵌入维度: {model.get_sentence_embedding_dimension()}")
@@ -340,7 +433,7 @@ def train_model(
     print(f"    Warmup Steps: {warmup_steps}")
     print(f"    Batches per epoch: {len(train_dataloader)}")
 
-    os.makedirs(OUTPUT_MODEL_PATH, exist_ok=True)
+    os.makedirs(run_settings.output_model_path, exist_ok=True)
 
     t0 = time.time()
     model.fit(
@@ -348,7 +441,7 @@ def train_model(
         epochs=config.epochs,
         warmup_steps=warmup_steps,
         optimizer_params={"lr": config.learning_rate},
-        output_path=OUTPUT_MODEL_PATH,
+        output_path=run_settings.output_model_path,
         show_progress_bar=True,
         save_best_model=True,
         use_amp=True,               # 混合精度加速
@@ -356,7 +449,7 @@ def train_model(
     )
     elapsed = time.time() - t0
     print(f"\n  训练完成，耗时: {elapsed/60:.1f} 分钟")
-    print(f"  模型保存至: {OUTPUT_MODEL_PATH}")
+    print(f"  模型保存至: {run_settings.output_model_path}")
 
     return model
 
@@ -367,6 +460,7 @@ def evaluate_model(
     test_pairs: list[dict[str, Any]],
     code_to_text: dict[str, str],
     config: TrainConfig,
+    run_settings: RunSettings,
 ) -> dict[str, Any]:
     """在测试集上评估检索准确率（Top1/Top3/Top5）。"""
     print("\n" + "=" * 70)
@@ -474,8 +568,8 @@ def evaluate_model(
             print(f"    Top3: {multi_top3}/{n_multi} = {multi_top3/n_multi*100:.1f}%")
 
     # 对比基准模型（未微调）
-    print(f"\n  [对比基准] 未微调 BGE-M3 的准确率...")
-    base_model = SentenceTransformer(BASE_MODEL_PATH, device=device)
+    print(f"\n  [对比基准] 未微调基础模型的准确率...")
+    base_model = SentenceTransformer(run_settings.base_model_path, device=device)
     base_model.max_seq_length = config.max_seq_length
 
     with torch.no_grad():
@@ -529,11 +623,17 @@ def evaluate_model(
 # ── 主流程 ──────────────────────────────────────────
 def main() -> None:
     """执行 Round2 数据训练、评估与结果落盘。"""
+    args = parse_args()
     config = TrainConfig()
+    run_settings = build_run_settings(args)
 
     print("=" * 70)
     print("第二轮标注数据集 → RAG 检索模型训练")
-    print(f"基础模型: {BASE_MODEL_PATH}")
+    if run_settings.run_label:
+        print(f"运行标签: {run_settings.run_label}")
+    print(f"基础模型: {run_settings.base_model_path}")
+    print(f"输出模型目录: {run_settings.output_model_path}")
+    print(f"评估结果文件: {run_settings.result_file_path}")
     print(f"输出目录: {OUTPUT_DIR}")
     print("=" * 70)
 
@@ -552,17 +652,16 @@ def main() -> None:
     )
 
     # Step 3: 微调
-    model = train_model(train_examples, config)
+    model = train_model(train_examples, config, run_settings)
 
     # Step 4: 评估
     code_to_text = load_occupation_dict("")
-    results = evaluate_model(model, test_pairs, code_to_text, config)
+    results = evaluate_model(model, test_pairs, code_to_text, config, run_settings)
 
     # ── 保存结果 ──
-    result_file = os.path.join(OUTPUT_DIR, "evaluation_results.json")
-    with open(result_file, "w", encoding="utf-8") as f:
+    with open(run_settings.result_file_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
-    print(f"\n评估结果已保存至: {result_file}")
+    print(f"\n评估结果已保存至: {run_settings.result_file_path}")
 
     # ── 最终报告 ──
     print("\n" + "=" * 70)
@@ -571,8 +670,8 @@ def main() -> None:
     print(f"""
   训练样本数: {len(train_examples)}
   测试样本数: {results['test_total']}
-  基础模型: BGE-M3
-  微调后模型: {OUTPUT_MODEL_PATH}
+  基础模型: {run_settings.base_model_path}
+  微调后模型: {run_settings.output_model_path}
 
   检索准确率:
     微调前 Top1: {results['base_top1']:.1f}%

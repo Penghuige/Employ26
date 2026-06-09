@@ -92,7 +92,7 @@ def main() -> None:
     task_annotations: dict[int, dict[str, Any]] = {}
     validation_tasks: list[int] = []
     for item in raw_data:
-        task_id = item["id"]
+        task_id = item["task_id"]
         data_fields = item["data"]
         ann_list: list[dict[str, Any]] = []
         for ann in item["annotations"]:

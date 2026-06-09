@@ -158,7 +158,7 @@ class LLMReranker:
 
         Args:
             backend: 可选后端覆盖；为空时读取模型平台默认配置。
-            vllm_config_path: vLLM TOML 配置文件路径，仅 vllm 后端使用。
+            vllm_config_path: 兼容旧调用保留；当前后端配置统一读取 `config/model_runtime.yaml`。
             system_prompt: 自定义 system prompt，为空时使用内置默认。
             temperature: LLM 采样温度（低值确保输出稳定）。
             max_tokens: 最大输出 token 数。

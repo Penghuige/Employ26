@@ -220,6 +220,7 @@ def normalize_task_v2_record(record: dict[str, Any]) -> tuple[dict[str, Any], li
         "updated_at": record.get("updated_at"),
         "updated_by": record.get("updated_by"),
         "row_id": int(data.get("row_id", 0)) if str(data.get("row_id", "")).isdigit() else None,
+        "recruitment_record_id": str(data.get("recruitment_record_id", "")),
         "sample_source": str(data.get("sample_source", "")),
         "job_title": str(data.get("job_title", "")),
         "job_requirements": str(data.get("job_requirements_clean", "")),

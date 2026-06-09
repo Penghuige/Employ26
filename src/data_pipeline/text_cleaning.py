@@ -58,12 +58,37 @@ def normalize_text(text: str) -> str:
         .replace("．", ".")
     )
     text = re.sub(r"[ \t\u3000\xa0]+", " ", text)
+    bracket_heading_re = re.compile(rf"\[(?P<head>{MIDLINE_PATTERN})\]\s*")
+    text = bracket_heading_re.sub(
+        lambda m: f"\n{m.group('head')}:",
+        text,
+    )
     inline_re = re.compile(
         rf"(?<!^)(?<!\n)(?P<prefix>[；;。.!?？!\"']|\s)\s*"
         rf"(?P<head>(?:\[)?(?:{MIDLINE_PATTERN})(?:\])?{OPTIONAL_NOTE_RE}\s*(?::)?)"
     )
     for _ in range(3):
         text = inline_re.sub(lambda m: f"{m.group('prefix')}\n{m.group('head')}", text)
+    text = re.sub(
+        r"(?<=[。；;])\s*(?=(?:[（(]?\d+[)）]?[、.．]))",
+        "\n",
+        text,
+    )
+    text = re.sub(
+        r"(?<=[\u4e00-\u9fffA-Za-z0-9)])\s+(?=(?:[（(]?\d+[)）]?[、.．]))",
+        "\n",
+        text,
+    )
+    text = re.sub(
+        r"(?<=[\u4e00-\u9fffA-Za-z)])(?=\d+[、.](?!\d))",
+        "\n",
+        text,
+    )
+    text = re.sub(
+        r"(?<=。)(?=\d+[\u4e00-\u9fffA-Za-z])",
+        "\n",
+        text,
+    )
     text = re.sub(r"(?<!^)(?<!\n)(?=[一二三四五六七八九十]+[、.])", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

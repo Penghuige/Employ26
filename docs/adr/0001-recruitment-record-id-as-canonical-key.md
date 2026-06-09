@@ -1,0 +1,3 @@
+# Use recruitment_record_id as the canonical recruitment identity
+
+Employ26 will use `recruitment_record_id` as the single canonical identity field for recruitment records across normalized tables, parsing results, matching results, annotation-related active public tables, and downstream reusable outputs. This ID is assigned only when a record first enters `public.recruitment_jobs_normalized` and no historical match is found, then remains frozen; legacy identity fields such as `sample_row_id`, `source_record_id`, `row_id`, and generic `job_id` are deprecated and replaced as standard reference keys.

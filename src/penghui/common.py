@@ -127,19 +127,45 @@ def ensure_deepseek_table(
 def load_annotations_from_pg(
     *,
     table_name: str = DEFAULT_TASK_TABLE,
+    require_recruitment_record_id: bool = True,
 ) -> list[dict[str, Any]]:
-    """从 PostgreSQL 读取任务表，并重建为原始脚本使用的结构。"""
+    """从 PostgreSQL 读取任务表，并重建为实验脚本使用的结构。
+
+    返回结果中的身份字段约束：
+    - `task_id` 只表示标注任务身份
+    - `recruitment_record_id` 表示正式招聘记录身份
+    - 不再暴露模糊的 `id` 字段，避免被误读为招聘记录主键
+    """
     engine = create_pg_engine()
     with engine.connect() as conn:
+        available_columns = {
+            str(row[0])
+            for row in conn.execute(
+                text(
+                    """
+                    select column_name
+                    from information_schema.columns
+                    where table_schema = 'annotations'
+                      and table_name = 'label_studio_tasks_v2'
+                    """
+                )
+            ).fetchall()
+        }
+        recruitment_record_sql = (
+            "coalesce(recruitment_record_id, '') as recruitment_record_id,"
+            if "recruitment_record_id" in available_columns
+            else "'' as recruitment_record_id,"
+        )
         rows = conn.execute(
             text(
                 f"""
                 select
-                    id,
+                    id as task_id,
+                    {recruitment_record_sql}
                     annotations_completed,
                     data_raw
                 from {table_name}
-                order by id
+                order by task_id
                 """
             )
         ).mappings()
@@ -147,9 +173,16 @@ def load_annotations_from_pg(
         for row in rows:
             annotations_raw = row["annotations_completed"] or "[]"
             data_raw = row["data_raw"] or "{}"
+            recruitment_record_id = str(row["recruitment_record_id"] or "")
+            if require_recruitment_record_id and not recruitment_record_id:
+                raise ValueError(
+                    "检测到缺失 recruitment_record_id 的标注任务，"
+                    "请先完成历史任务回填后再运行 Penghui 实验脚本。"
+                )
             raw_data.append(
                 {
-                    "id": int(row["id"]),
+                    "task_id": int(row["task_id"]),
+                    "recruitment_record_id": recruitment_record_id,
                     "annotations": json.loads(annotations_raw),
                     "data": json.loads(data_raw),
                 }

@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from collections import Counter
@@ -46,12 +47,48 @@ BASE_DIR = str(_project.project_root)
 OUTPUT_DIR = str(get_training_output_dir())
 OUTPUT_FILE = os.path.join(get_penghui_output_dir(), "model_comparison.txt")
 
-MODEL_PATHS = {
+DEFAULT_MODEL_PATHS = {
     "v1 (全量)":             resolve_model_dir("bge-large-round2-finetuned"),
     "v3 (Silver/Gold)":      resolve_model_dir("bge-large-round2-finetuned-v3"),
     "v4 (Medium分歧)":       resolve_model_dir("bge-large-round2-finetuned-v4"),
     "baseline (bge-large)":  resolve_base_model_path(),
 }
+
+
+def parse_args() -> argparse.Namespace:
+    """解析统一评估脚本参数。"""
+    parser = argparse.ArgumentParser(
+        description="运行 Penghui 检索模型统一评估，支持显式传入待评估模型列表。",
+    )
+    parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help=(
+            "显式添加一个待评估模型，可重复传入。"
+            "例如 --model v1-bge-m3=output/penghui/rag_round2_training/v1-bge-m3"
+        ),
+    )
+    return parser.parse_args()
+
+
+def build_model_paths(model_args: list[str]) -> dict[str, str]:
+    """根据命令行参数构造待评估模型列表。"""
+    if not model_args:
+        return dict(DEFAULT_MODEL_PATHS)
+
+    model_paths = dict(DEFAULT_MODEL_PATHS)
+    for raw in model_args:
+        if "=" not in raw:
+            raise SystemExit(f"--model 参数格式错误，应为 NAME=PATH，收到: {raw}")
+        name, path = raw.split("=", 1)
+        name = name.strip()
+        path = path.strip()
+        if not name or not path:
+            raise SystemExit(f"--model 参数格式错误，应为 NAME=PATH，收到: {raw}")
+        model_paths[name] = path
+    return model_paths
 
 
 def parse_choice(annotation: dict[str, Any]) -> str | None:
@@ -106,6 +143,9 @@ def load_dict() -> tuple[
 
 def main() -> None:
     """执行多版本嵌入模型的综合评估。"""
+    args = parse_args()
+    model_paths = build_model_paths(args.model)
+
     print("Loading data...")
     raw_data = load_annotations_from_pg()
     ds_records = load_deepseek_records()
@@ -114,7 +154,8 @@ def main() -> None:
     print("Building eval samples...")
     eval_samples: list[dict[str, Any]] = []
     for item in raw_data:
-        tid = item["id"]
+        tid = item["task_id"]
+        recruitment_record_id = item["recruitment_record_id"]
         data = item["data"]
         jt = str(data.get("job_title", "")).strip()
         jr = str(data.get("job_requirements_clean", "")).strip()
@@ -156,6 +197,7 @@ def main() -> None:
 
         eval_samples.append({
             "task_id": tid,
+            "recruitment_record_id": recruitment_record_id,
             "anchor": anchor,
             "candidates": candidates,
             "human_choice": hum_choice,
@@ -170,7 +212,7 @@ def main() -> None:
 
     all_results: dict[str, dict[str, Any]] = {}
 
-    for model_name, model_path in MODEL_PATHS.items():
+    for model_name, model_path in model_paths.items():
         print(f"\n{'='*60}")
         print(f"Evaluating: {model_name}")
         print(f"{'='*60}")

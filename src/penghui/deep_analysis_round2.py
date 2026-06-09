@@ -14,19 +14,21 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from pathlib import Path
 from typing import Any, Optional
 
-from .common import load_annotations_from_pg
+from .common import get_penghui_output_dir, load_annotations_from_pg
 
 TaskPayload = dict[str, Any]
 TaskMap = dict[int, TaskPayload]
+OUTPUT_FILE = Path(get_penghui_output_dir()) / "deep_analysis_round2.txt"
 
 
 def load_task_annotations(raw_data: list[dict[str, Any]]) -> TaskMap:
     """将 PostgreSQL 读取出的任务列表转换为按任务聚合的结构。"""
     task_annotations: TaskMap = {}
     for item in raw_data:
-        task_id = item["id"]
+        task_id = item["task_id"]
         ann_list: list[Optional[str]] = []
         for ann in item["annotations"]:
             choice: Optional[str] = None
@@ -90,32 +92,36 @@ def find_choice_topk(data: dict[str, Any], choice: str) -> Optional[int]:
     return None
 
 
-def print_cumulative_topk_stats(
+def build_cumulative_topk_stats_lines(
     title: str,
     topk_hits: dict[int, int],
     valid_total: int,
     none_total: int,
     valid_label: str,
     none_label: str,
-) -> None:
-    """打印累计 TopK 命中率摘要。"""
-    print(f"\n=== {title} ===")
-    print(f"{valid_label}: {valid_total}")
-    print(f"{none_label}: {none_total}")
+) -> list[str]:
+    """构造累计 TopK 命中率摘要文本。"""
+    lines = [
+        f"=== {title} ===",
+        f"{valid_label}: {valid_total}",
+        f"{none_label}: {none_total}",
+    ]
 
     cumulative_hits = 0
     for topk in sorted(topk_hits.keys()):
         cumulative_hits += topk_hits[topk]
         pct = cumulative_hits / valid_total * 100 if valid_total > 0 else 0
-        print(
+        lines.append(
             f"  Top-{topk}: {topk_hits[topk]} -> cum Top{topk}="
             f"{cumulative_hits}/{valid_total} = {pct:.1f}%"
         )
+    return lines
 
 
 def main() -> None:
     """执行第二轮标注数据的 TopK 与多数意见分析。"""
     task_annotations = load_task_annotations(load_annotations_from_pg())
+    output_lines: list[str] = []
 
     # 任务级 TopK 命中统计。
     topk_hits: defaultdict[int, int] = defaultdict(int)
@@ -135,13 +141,15 @@ def main() -> None:
         if topk is not None:
             topk_hits[topk] += 1
 
-    print_cumulative_topk_stats(
+    output_lines.extend(
+        build_cumulative_topk_stats_lines(
         title="Per-Task (Majority Vote) RAG TopK Hit Rate",
         topk_hits=topk_hits,
         valid_total=tasks_with_majority,
         none_total=tasks_with_none_maj,
         valid_label="Tasks with majority (non-NONE)",
         none_label="Tasks with majority=NONE",
+        )
     )
 
     # 单标注任务分析。
@@ -166,13 +174,16 @@ def main() -> None:
         if topk is not None:
             single_topk[topk] += 1
 
-    print_cumulative_topk_stats(
+    output_lines.append("")
+    output_lines.extend(
+        build_cumulative_topk_stats_lines(
         title="Single-Annotator Tasks RAG TopK",
         topk_hits=single_topk,
         valid_total=single_valid,
         none_total=single_none,
         valid_label="Valid choices",
         none_label="NONE",
+        )
     )
 
     # 多标注任务按多数意见统计。
@@ -197,13 +208,16 @@ def main() -> None:
         if topk is not None:
             multi_topk[topk] += 1
 
-    print_cumulative_topk_stats(
+    output_lines.append("")
+    output_lines.extend(
+        build_cumulative_topk_stats_lines(
         title="Multi-Annotator Tasks (Majority) RAG TopK",
         topk_hits=multi_topk,
         valid_total=multi_valid,
         none_total=multi_none,
         valid_label="Valid majorities",
         none_label="NONE majorities",
+        )
     )
 
     # 标注级 TopK 命中率。
@@ -223,26 +237,30 @@ def main() -> None:
             if topk is not None:
                 per_ann_topk[topk] += 1
 
-    print_cumulative_topk_stats(
+    output_lines.append("")
+    output_lines.extend(
+        build_cumulative_topk_stats_lines(
         title="Per-Annotation RAG TopK Hit Rate",
         topk_hits=per_ann_topk,
         valid_total=per_ann_total,
         none_total=per_ann_none,
         valid_label="Total valid annotations",
         none_label="NONE annotations",
+        )
     )
 
     # 任务概览统计。
     total_tasks = len(task_annotations)
-    print("\n=== Task-Level Summary ===")
-    print(f"Total tasks: {total_tasks}")
-    print(f"  Multi-annotator: {len(multi_tasks)}")
-    print(f"  Single-annotator: {len(single_tasks)}")
-    print(
+    output_lines.append("")
+    output_lines.append("=== Task-Level Summary ===")
+    output_lines.append(f"Total tasks: {total_tasks}")
+    output_lines.append(f"  Multi-annotator: {len(multi_tasks)}")
+    output_lines.append(f"  Single-annotator: {len(single_tasks)}")
+    output_lines.append(
         f"Tasks with majority non-NONE: {tasks_with_majority} "
         f"({tasks_with_majority / total_tasks * 100:.1f}%)"
     )
-    print(
+    output_lines.append(
         f"Tasks with majority NONE: {tasks_with_none_maj} "
         f"({tasks_with_none_maj / total_tasks * 100:.1f}%)"
     )
@@ -258,10 +276,14 @@ def main() -> None:
         agree_rates.append(top_count / len(choices))
 
     avg_agree = sum(agree_rates) / len(agree_rates) if agree_rates else 0
-    print(f"\nAvg majority agreement rate (multi-ann tasks): {avg_agree * 100:.1f}%")
+    output_lines.append("")
+    output_lines.append(
+        f"Avg majority agreement rate (multi-ann tasks): {avg_agree * 100:.1f}%"
+    )
 
     # 枚举多个候选指标，帮助定位与 82.8% 最接近的解释口径。
-    print("\n=== CANDIDATES FOR 82.8% ===")
+    output_lines.append("")
+    output_lines.append("=== CANDIDATES FOR 82.8% ===")
     candidates: dict[str, float] = {}
 
     candidates["A: Task-majority in RAG Top3"] = (
@@ -297,7 +319,12 @@ def main() -> None:
     for name, value in sorted(candidates.items(), key=lambda item: abs(item[1] - 82.8)):
         diff = abs(value - 82.8)
         marker = " *** CLOSEST ***" if diff < 1.0 else (" **" if diff < 5.0 else "")
-        print(f"  {name}: {value:.1f}% (diff={diff:.1f}pp){marker}")
+        output_lines.append(f"  {name}: {value:.1f}% (diff={diff:.1f}pp){marker}")
+
+    report = "\n".join(output_lines)
+    print(report)
+    OUTPUT_FILE.write_text(report + "\n", encoding="utf-8")
+    print(f"\nSaved to {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":

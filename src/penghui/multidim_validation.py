@@ -225,7 +225,8 @@ def main() -> None:
 
     # 主循环：计算每条任务的所有信号
     for item in raw_data:
-        task_id = item["id"]
+        task_id = item["task_id"]
+        recruitment_record_id = item["recruitment_record_id"]
         data = item["data"]
         anns = item["annotations"]
         n_annotators = len(anns)
@@ -336,6 +337,7 @@ def main() -> None:
 
         results.append({
             "task_id": task_id,
+            "recruitment_record_id": recruitment_record_id,
             "job_title": job_title,
             "job_reqs": job_reqs[:200],
             "anchor": anchor[:300],

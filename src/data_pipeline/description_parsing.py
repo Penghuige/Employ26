@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from typing import List, Dict, Any, Tuple, Optional
 import pandas as pd
+from sqlalchemy import text
 
 from src.data_pipeline.description_schema import (
     ALIAS_TO_STD,
@@ -25,7 +26,13 @@ from src.data_pipeline.description_schema import (
     UNCLASSIFIED_TEXT_COL,
 )
 from src.data_pipeline.text_cleaning import normalize_text, remove_noise, sanitize_item
-from src.db.job_description_parsed import build_parsed_pg_rows, write_parsed_rows_to_postgres
+from src.db.job_description_parsed import (
+    build_parsed_pg_rows,
+    quote_table_name,
+    split_table_name,
+    write_parsed_rows_to_postgres,
+)
+from src.db.postgres import create_pg_engine, table_exists
 
 
 ALIAS_PATTERNS = [
@@ -38,6 +45,45 @@ ITEM_START_RE = re.compile(rf'(?:(?<=^)|(?<=[\n;；]))\s*(?=(?:"|“)?{ITEM_TOKE
 ITEM_LEAD_RE = re.compile(rf'^\s*(?:"|“)?{ITEM_TOKEN}\s*')
 PREFIX_ENUM_RE = re.compile(r'^\s*(?:[（(]?[一二三四五六七八九十0-9]+[)）]?[、.．]?\s*)')
 NOISE_ONLY_RE = re.compile(r'^\s*(?:[（(]?[一二三四五六七八九十0-9]+[)）]?[、.．。]?)\s*$')
+BENEFIT_ITEM_RE = re.compile(
+    r"薪资|薪酬|工资|底薪|提成|奖金|绩效|补贴|津贴|福利|五险|社保|公积金|包吃|包住|住宿|餐补|房补|"
+    r"年假|双休|大小周|节假日|月休|做六休一|法定|体检|团建|下午茶|日结|预支|报销车费"
+)
+OTHER_ITEM_RE = re.compile(
+    r"工作地点|上班地点|工作地址|办公地点|地址|职能类别|关键字|关键词|联系方式|联系人|公司简介|"
+    r"公司介绍|备注|友情提醒|重要提示|招聘人数|公司服务|岗位优势|原标题|温馨提示|投递简历|详情欢迎咨询"
+)
+DUTY_ITEM_RE = re.compile(
+    r"负责|参与|开展|执行|制定|完成|跟进|处理|管理|维护|开发|设计|研究|协助|推进|撰写|拓展|"
+    r"走访|下达|调试|改善|培训|接待|销售|测试|支持|收集|分析|组织|协调|配送|分拣|打包|"
+    r"扫描|贴标签|取餐|送餐|跑腿|煮饭|辅导|编程|调机|生产|加工|组装|操作|主要跑|日常负责"
+    r"|短途配送|配送"
+)
+REQUIREMENT_ITEM_RE = re.compile(
+    r"学历|专业|经验|优先|熟悉|熟练|掌握|能力|责任心|沟通|任职|要求|资格|抗压|本科|大专|硕士|"
+    r"博士|证书|职称|年龄|CET|GPA|身体健康|可接受|无犯罪|纹身|吃苦耐劳|会使用|服从|不限"
+    r"|无需经验|无经验|接受兼职|接受短期|短期|长期"
+)
+EMBEDDED_HEADING_RE = re.compile(
+    r"(岗位职责|工作职责|职责描述|主要职责|任职要求|岗位要求|任职资格|职位要求|招聘要求|"
+    r"应聘要求|员工要求|司机要求|基本要求|必须条件|优先条件|职业要求|相关要求|招聘需求|年龄要求|採用要求|采用要求|要求|我们要找这样的人才|"
+    r"工作内容|职位描述|职位简介|工作薪资|薪资待遇|"
+    r"薪资福利|福利待遇|其他福利|工作岗位|工作要求|技能要求|岗位条件|工作地点|工作地址|"
+    r"上班时间|工作时间|温馨提示|公司服务|岗位优势|优势|原标题|薪酬区间|薪资架构|工作魅力|我们能给到您什么|"
+    r"我们能为您提供|我们能提供|我们需要你做什么|我们希望你是|我们希望你是什么样的人|"
+    r"希望你和我们一起|你未来会掌握的)\s*[:：]"
+)
+SUFFIX_HEADING_RE = re.compile(
+    r"(?P<label>[\u4e00-\u9fffA-Za-z0-9 /、_-]{0,16}?"
+    r"(?:岗位描述|岗位职责|工作职责|工作内容|工作要求|岗位要求|职位要求|任职要求|任职资格|职业要求|招聘需求|年龄要求|採用要求|采用要求|必须条件|优先条件))"
+    r"\s*[:：]?\s*(?P<rest>.*)$"
+)
+LEADING_HEADING_RE = re.compile(
+    r"^(?:[一二三四五六七八九十0-9]+[、.．]?\s*)?"
+    r"(?P<label>工作内容|岗位职责|工作职责|任职要求|岗位要求|职位要求|招聘要求|职业要求|相关要求|年龄要求|薪资待遇|薪酬区间|福利待遇|工作时间)"
+    r"\s*(?P<rest>(?:\d+[、.．].*|[：:].*|$))"
+)
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[。；;])\s*")
 
 
 def standardize_title(raw_title: str) -> str:
@@ -75,8 +121,12 @@ def standardize_title(raw_title: str) -> str:
             return std
     if ("任职" in compact or "资格" in compact or "岗位" in compact or "职位" in compact) and ("要求" in compact or "条件" in compact):
         return "任职要求"
+    if compact.endswith(("任职要求", "任职资格", "岗位要求", "职位要求", "工作要求")):
+        return "任职要求"
     if compact.endswith(("要求", "条件", "资格")) and len(compact) <= 10:
         return "任职要求"
+    if compact.endswith(("岗位职责", "工作职责", "工作内容", "岗位描述", "职位描述")):
+        return "岗位职责"
     if ("职责" in compact or "内容" in compact or "描述" in compact or "范围" in compact or "总责" in compact) and (
         "岗位" in compact or "工作" in compact or "职位" in compact or compact == "职责" or len(compact) <= 8
     ):
@@ -104,6 +154,12 @@ def match_heading(line: str):
         return "职责", ""
     if re.fullmatch(r'要求\s*:?', s2):
         return "任职要求", ""
+    leading = LEADING_HEADING_RE.match(s2)
+    if leading:
+        label = leading.group("label").strip()
+        rest = leading.group("rest").strip()
+        rest = re.sub(r"^[:：]\s*", "", rest)
+        return label, rest
     for patt, alias, std in ALIAS_PATTERNS:
         if std in {"其他信息", "福利待遇"}:
             regex = rf'^(?:\[)?{patt.pattern}(?:\])?{OPTIONAL_NOTE_RE}(?=\s*(?::|$))\s*(?::)?\s*(?P<rest>.*)$'
@@ -118,6 +174,12 @@ def match_heading(line: str):
         title_std = standardize_title(label)
         if title_std != label:
             return label, rest
+    m = SUFFIX_HEADING_RE.match(s2)
+    if m:
+        label = m.group("label").strip()
+        title_std = standardize_title(label)
+        if title_std in {"岗位职责", "任职要求"}:
+            return label, m.group("rest").strip()
     return None
 
 
@@ -220,11 +282,121 @@ def infer_section_title(lines: List[str], fallback: Optional[str] = None) -> Opt
         scores["任职要求"] += 2
     if "工作范围" in text or "工作总责" in text:
         scores["岗位职责"] += 2
+    if DUTY_ITEM_RE.search(text) and REQUIREMENT_ITEM_RE.search(text) and scores["福利待遇"] >= max(scores["岗位职责"], scores["任职要求"]):
+        scores["福利待遇"] = max(0, scores["福利待遇"] - 2)
 
     best_title, best_score = max(scores.items(), key=lambda kv: kv[1])
     if best_score == 0:
         return fallback
     return best_title
+
+
+def classify_item(item: str, current_title: str) -> str:
+    """按条目关键词对 section 内混杂内容做轻量分流。"""
+    text = sanitize_item(item)
+    if not text:
+        return current_title
+    duty_score = len(DUTY_ITEM_RE.findall(text))
+    req_score = len(REQUIREMENT_ITEM_RE.findall(text))
+    if OTHER_ITEM_RE.search(text) and duty_score == 0 and req_score == 0:
+        return "其他信息"
+    if re.search(r"服从管理|男女不限|经验不限|学历不限|年龄\d", text):
+        req_score += 2
+    if re.search(r"无需经验|无经验|接受兼职|接受短期|短期过渡|年龄[:：]?\d|男女不限", text):
+        req_score += 2
+    if re.search(r"^(?:具有|具备|熟悉|熟练|掌握|精通|能够|能独立|有较强|较强的|良好的|优秀的)", text):
+        req_score += 2
+    if re.search(r"具有[^。；;]{0,24}(能力|经验|背景|意识)|具备[^。；;]{0,24}(能力|经验|资质|证书)", text):
+        req_score += 2
+    if re.search(r"负责[^。；;]{0,30}(配送|跑腿|维护|推广|销售|接待)|主要跑|主要负责|日常负责|同城跑腿|小件物品配送", text):
+        duty_score += 3
+    if current_title == "其他信息" and duty_score > req_score and duty_score > 0:
+        return "岗位职责"
+    if BENEFIT_ITEM_RE.search(text) and req_score == 0 and duty_score == 0:
+        return "福利待遇"
+    if current_title == "岗位职责" and req_score >= 2 and req_score > duty_score:
+        return "任职要求"
+    if current_title == "任职要求" and duty_score >= 2 and duty_score > req_score:
+        return "岗位职责"
+    return current_title
+
+
+def split_mixed_item_by_sentence(item: str, current_title: str) -> List[Tuple[str, str]]:
+    """把一个混有职责、要求、福利的长条目按短句重新分流。"""
+    text = sanitize_item(item)
+    if not text:
+        return []
+    if len(text) < 30:
+        return [(classify_item(text, current_title), text)]
+    pieces = [sanitize_item(x) for x in SENTENCE_SPLIT_RE.split(text) if sanitize_item(x)]
+    if len(pieces) <= 1 and DUTY_ITEM_RE.search(text) and REQUIREMENT_ITEM_RE.search(text):
+        pieces = [sanitize_item(x) for x in re.split(r"[，,]", text) if sanitize_item(x)]
+    if len(pieces) <= 1:
+        return [(classify_item(text, current_title), text)]
+
+    output: List[Tuple[str, str]] = []
+    for piece in pieces:
+        target_title = classify_item(piece, current_title)
+        if output and output[-1][0] == target_title:
+            output[-1] = (target_title, sanitize_item(output[-1][1] + " " + piece))
+        else:
+            output.append((target_title, piece))
+    return output
+
+
+def split_mixed_items(items: List[str], current_title: str) -> List[Tuple[str, str]]:
+    """对 section 中的所有条目执行职责/要求/福利轻量重分流。"""
+    output: List[Tuple[str, str]] = []
+    for item in items:
+        output.extend(split_mixed_item_by_sentence(item, current_title))
+    return output
+
+
+def split_embedded_heading_item(item: str, current_title: str) -> List[Tuple[str, str]]:
+    """把单个条目中残留的内嵌标题拆成多个 `(标题, 正文)` 片段。"""
+    text = sanitize_item(item)
+    matches = list(EMBEDDED_HEADING_RE.finditer(text))
+    if not matches:
+        return split_mixed_item_by_sentence(text, current_title)
+
+    parts: List[Tuple[str, str]] = []
+    if matches[0].start() > 0:
+        prefix = sanitize_item(text[:matches[0].start()])
+        if prefix:
+            parts.extend(split_mixed_item_by_sentence(prefix, current_title))
+
+    for idx, match in enumerate(matches):
+        next_start = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        heading = match.group(1)
+        body = sanitize_item(text[match.end():next_start])
+        if body:
+            parts.extend(split_mixed_item_by_sentence(body, standardize_title(heading)))
+    return parts
+
+
+def normalize_final_sections(sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """清理最终 sections，把福利、地点和明显错入的条目重新归类。"""
+    grouped: List[Dict[str, Any]] = []
+    for sec in sections:
+        base_title = sec.get("title_std", "")
+        for item in sec.get("items", []):
+            for embedded_title, embedded_item in split_embedded_heading_item(item, base_title):
+                clean_item = sanitize_item(embedded_item)
+                if not clean_item:
+                    continue
+                target_title = classify_item(clean_item, embedded_title)
+                if grouped and grouped[-1]["title_std"] == target_title:
+                    grouped[-1]["items"].append(clean_item)
+                    continue
+                grouped.append(
+                    {
+                        "title_raw": target_title if target_title != base_title else sec.get("title_raw", target_title),
+                        "title_std": target_title,
+                        "title_inferred": sec.get("title_inferred", False) or target_title != base_title,
+                        "items": [clean_item],
+                    }
+                )
+    return grouped
 
 
 def parse_job_description(text: str) -> Dict[str, Any]:
@@ -345,6 +517,7 @@ def parse_job_description(text: str) -> Dict[str, Any]:
             sec["title_raw"] = "岗位职责"
             sec["title_std"] = "岗位职责"
             sec["title_inferred"] = True
+    final_sections = normalize_final_sections(final_sections)
 
     cleaned_unclassified = []
     seen = set()
@@ -551,6 +724,117 @@ def parse_and_write_desc_df_to_postgres(
     return write_parsed_rows_to_postgres(rows, table_name=table_name)
 
 
+def read_source_table_from_postgres(
+    source_table: str,
+    limit_rows: int | None = None,
+    only_risk_rows: bool = False,
+    risk_parser_version: str = "description_parsing_v3",
+    target_table: str = DEFAULT_PARSED_TABLE,
+) -> pd.DataFrame:
+    """从 PostgreSQL 源表读取岗位数据，并补充稳定到本次查询的行号。"""
+    schema_name, table_name = split_table_name(source_table)
+    qualified_table = quote_table_name(source_table)
+    target_qualified_table = quote_table_name(target_table)
+    limit_sql = ""
+    params: dict[str, int] = {}
+    if limit_rows is not None:
+        if limit_rows <= 0:
+            raise ValueError("limit_rows 必须大于 0")
+        limit_sql = "LIMIT :limit_rows"
+        params["limit_rows"] = int(limit_rows)
+    params["source_table"] = source_table
+    params["risk_parser_version"] = risk_parser_version
+
+    if only_risk_rows:
+        risk_where = """
+            (
+                (coalesce(p.requirements_text, '') = '' and coalesce(p.duties_text, '') = '')
+                or (
+                    coalesce(p.requirements_text, '') ~ '(岗位职责|工作职责|职责描述|任职要求|岗位要求|任职资格|职位要求|应聘要求|员工要求|司机要求|基本要求|工作内容|职位描述|工作薪资|工作岗位|工作要求|福利待遇|其他福利)\\s*[:：]'
+                    or coalesce(p.duties_text, '') ~ '(岗位职责|工作职责|职责描述|任职要求|岗位要求|任职资格|职位要求|应聘要求|员工要求|司机要求|基本要求|工作内容|职位描述|工作薪资|工作岗位|工作要求|福利待遇|其他福利)\\s*[:：]'
+                )
+                or coalesce(p.requirements_text, '') ~ '(薪资|福利|五险|公积金|年假|奖金|补贴|包吃|包住|住宿|工作时间|双休)'
+                or (
+                    coalesce(p.requirements_text, '') = ''
+                    and coalesce(p.job_description_raw, '') ~ '(学历|经验|熟悉|熟练|优先|本科|大专|硕士|博士|任职|要求|资格|证书|专业|年龄|健康)'
+                )
+                or (
+                    coalesce(p.duties_text, '') = ''
+                    and coalesce(p.job_description_raw, '') ~ '(负责|参与|开发|维护|执行|管理|完成|协助|跟进|处理|制定|接待|销售|收集|打包|分拣|配送|组装)'
+                )
+            )
+        """
+        if risk_parser_version.lower() == "latest":
+            query = text(
+                f"""
+                WITH latest_parsed AS (
+                    SELECT *
+                    FROM (
+                        SELECT
+                            p.*,
+                            row_number() OVER (
+                                PARTITION BY p.source_table, p.source_row_number
+                                ORDER BY p.parser_version DESC, p.parsed_at DESC
+                            ) AS parsed_rank
+                        FROM {target_qualified_table} p
+                        WHERE p.source_table = :source_table
+                    ) ranked
+                    WHERE parsed_rank = 1
+                )
+                SELECT s.*
+                FROM (
+                    SELECT
+                        row_number() OVER (ORDER BY ctid) AS "__source_row_number",
+                        *
+                    FROM {qualified_table}
+                ) s
+                JOIN latest_parsed p
+                  ON p.source_table = :source_table
+                 AND p.source_row_number = s."__source_row_number"
+                WHERE {risk_where}
+                ORDER BY s."__source_row_number"
+                {limit_sql}
+                """
+            )
+        else:
+            query = text(
+                f"""
+                SELECT s.*
+                FROM (
+                    SELECT
+                        row_number() OVER (ORDER BY ctid) AS "__source_row_number",
+                        *
+                    FROM {qualified_table}
+                ) s
+                JOIN {target_qualified_table} p
+                  ON p.source_table = :source_table
+                 AND p.source_row_number = s."__source_row_number"
+                 AND p.parser_version = :risk_parser_version
+                WHERE {risk_where}
+                ORDER BY s."__source_row_number"
+                {limit_sql}
+                """
+            )
+    else:
+        query = text(
+            f"""
+            SELECT
+                row_number() OVER (ORDER BY ctid) AS "__source_row_number",
+                *
+            FROM {qualified_table}
+            {limit_sql}
+            """
+        )
+    engine = create_pg_engine()
+    try:
+        with engine.connect() as connection:
+            if not table_exists(connection, schema_name, table_name):
+                raise ValueError(f"PostgreSQL 源表不存在: {source_table}")
+            return pd.read_sql_query(query, connection, params=params)
+    finally:
+        engine.dispose()
+
+
 def build_issue_dataframe(parsed_df: pd.DataFrame) -> pd.DataFrame:
     """输出 unclassified 不为空的问题行，便于人工检查。"""
     if "unclassified_text" not in parsed_df.columns:
@@ -593,44 +877,134 @@ def build_hardcase_dataframe(parsed_df: pd.DataFrame) -> pd.DataFrame:
 def build_parser() -> argparse.ArgumentParser:
     """构建命令行参数。"""
     parser = argparse.ArgumentParser(description="岗位描述结构化切分")
-    parser.add_argument("--input-csv", required=True, help="输入 CSV 文件路径")
+    parser.add_argument(
+        "--input-source",
+        choices=["csv", "postgres"],
+        default="csv",
+        help="输入来源类型：csv 或 postgres",
+    )
+    parser.add_argument("--input-csv", default=None, help="输入 CSV 文件路径")
     parser.add_argument("--output-csv", default=None, help="可选：保存解析结果 CSV")
     parser.add_argument("--desc-col", default="岗位描述", help="岗位描述列名")
     parser.add_argument("--title-col", default="岗位名称", help="岗位名称列名")
-    parser.add_argument("--source-table", default="", help="写入 PostgreSQL 时记录的来源表名")
-    parser.add_argument("--source-platform", default=None, help="可选：来源平台名")
+    parser.add_argument(
+        "--source-table",
+        nargs="+",
+        default=[],
+        help="PostgreSQL 输入源表名，可一次传入多个；写入时也作为来源表名记录",
+    )
+    parser.add_argument(
+        "--source-platform",
+        nargs="*",
+        default=None,
+        help="可选：来源平台名；多表时按 --source-table 顺序对应，不传则自动推断",
+    )
     parser.add_argument("--target-table", default=DEFAULT_PARSED_TABLE, help="PostgreSQL 解析结果表名")
     parser.add_argument("--write-postgres", action="store_true", help="将解析结果写入 PostgreSQL")
-    parser.add_argument("--parse-workers", type=int, default=1, help="岗位描述切分并发数")
-    parser.add_argument("--parse-batch-size", type=int, default=2000, help="岗位描述切分批大小")
+    parser.add_argument("--limit-rows", type=int, default=None, help="仅用于调试，限制 PostgreSQL 源表读取行数")
+    parser.add_argument("--only-risk-rows", action="store_true", help="仅重跑上一版本解析结果中的高风险行")
+    parser.add_argument(
+        "--risk-parser-version",
+        default="latest",
+        help="--only-risk-rows 使用的上一版 parser_version；传 latest 表示按每条源记录当前最新解析结果筛选",
+    )
+    parser.add_argument("--parse-workers", type=int, default=32, help="岗位描述切分并发数")
+    parser.add_argument("--parse-batch-size", type=int, default=20000, help="岗位描述切分批大小")
     return parser
+
+
+def resolve_source_platforms(
+    source_tables: List[str],
+    source_platforms: Optional[List[str]],
+) -> List[Optional[str]]:
+    """校验并展开多源表对应的平台名。"""
+    if not source_platforms:
+        return [None] * len(source_tables)
+    if len(source_platforms) != len(source_tables):
+        raise ValueError("--source-platform 数量必须为 0 或与 --source-table 数量一致")
+    return source_platforms
 
 
 def main() -> None:
     """CLI 入口。"""
     args = build_parser().parse_args()
-    df = pd.read_csv(args.input_csv, encoding="utf-8")
-    parsed_df = parse_desc_df(
-        df,
-        desc_col=args.desc_col,
-        batch_size=max(1, int(args.parse_batch_size)),
-        num_workers=max(1, int(args.parse_workers)),
-    )
-    if args.output_csv:
-        parsed_df.to_csv(args.output_csv, index=False, encoding="utf-8-sig")
+    source_tables: List[str] = list(args.source_table or [])
+    source_platforms = resolve_source_platforms(source_tables, args.source_platform)
 
-    if args.write_postgres:
-        if not args.source_table:
-            raise ValueError("--write-postgres 需要同时提供 --source-table")
-        rows = build_parsed_pg_rows(
-            parsed_df=parsed_df,
-            source_table=args.source_table,
-            source_platform=args.source_platform,
-            title_col=args.title_col,
+    if args.input_source == "csv":
+        if not args.input_csv:
+            raise ValueError("--input-source csv 需要提供 --input-csv")
+        if args.write_postgres and len(source_tables) != 1:
+            raise ValueError("--input-source csv 写入 PostgreSQL 时需要且只能提供一个 --source-table")
+        df = pd.read_csv(args.input_csv, encoding="utf-8")
+        parsed_df = parse_desc_df(
+            df,
             desc_col=args.desc_col,
+            batch_size=max(1, int(args.parse_batch_size)),
+            num_workers=max(1, int(args.parse_workers)),
         )
-        written_count = write_parsed_rows_to_postgres(rows, table_name=args.target_table)
-        print(f"written rows: {written_count}")
+        if args.output_csv:
+            parsed_df.to_csv(args.output_csv, index=False, encoding="utf-8-sig")
+
+        if args.write_postgres:
+            rows = build_parsed_pg_rows(
+                parsed_df=parsed_df,
+                source_table=source_tables[0],
+                source_platform=source_platforms[0],
+                title_col=args.title_col,
+                desc_col=args.desc_col,
+            )
+            written_count = write_parsed_rows_to_postgres(rows, table_name=args.target_table)
+            print(f"{source_tables[0]} written rows: {written_count}")
+        return
+
+    if not source_tables:
+        raise ValueError("--input-source postgres 需要提供 --source-table")
+    output_frames: List[pd.DataFrame] = []
+    for source_table, source_platform in zip(source_tables, source_platforms):
+        df = read_source_table_from_postgres(
+            source_table=source_table,
+            limit_rows=args.limit_rows,
+            only_risk_rows=bool(args.only_risk_rows),
+            risk_parser_version=args.risk_parser_version,
+            target_table=args.target_table,
+        )
+        parsed_df = parse_desc_df(
+            df,
+            desc_col=args.desc_col,
+            batch_size=max(1, int(args.parse_batch_size)),
+            num_workers=max(1, int(args.parse_workers)),
+        )
+        if args.output_csv:
+            parsed_df = parsed_df.copy()
+            parsed_df["__parsed_source_table"] = source_table
+            output_frames.append(parsed_df)
+
+        if args.write_postgres:
+            rows = build_parsed_pg_rows(
+                parsed_df=parsed_df,
+                source_table=source_table,
+                source_platform=source_platform,
+                title_col=args.title_col,
+                desc_col=args.desc_col,
+            )
+            written_count = write_parsed_rows_to_postgres(rows, table_name=args.target_table)
+            print(f"{source_table} written rows: {written_count}")
+
+    if args.output_csv and output_frames:
+        pd.concat(output_frames, ignore_index=True).to_csv(
+            args.output_csv,
+            index=False,
+            encoding="utf-8-sig",
+        )
 
 if __name__ == "__main__":
+    """
+    python -m src.data_pipeline.description_parsing `
+  --input-source postgres `
+  --source-table '"51job".sample' `
+  --source-platform 51job `
+  --write-postgres `
+  --parse-workers 50
+    """
     main()

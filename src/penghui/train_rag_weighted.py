@@ -235,7 +235,7 @@ def main() -> None:
     print("\n[3] Computing quality tiers...")
     scored_pairs: list[dict[str, Any]] = []
     for item in raw_data:
-        tid = item["id"]; data = item["data"]; anns = item["annotations"]
+        tid = item["task_id"]; recruitment_record_id = item["recruitment_record_id"]; data = item["data"]; anns = item["annotations"]
         jt = str(data.get("job_title","")).strip()
         jr = str(data.get("job_requirements_clean","")).strip()
         if not jr: continue
@@ -287,7 +287,7 @@ def main() -> None:
         tier = compute_tier(r)
 
         scored_pairs.append(dict(
-            task_id=tid, anchor=anchor,
+            task_id=tid, recruitment_record_id=recruitment_record_id, anchor=anchor,
             positive=c2text[hum_code], code=hum_code,
             tier=tier, score=r,
         ))

@@ -6,7 +6,7 @@
 1. 使用 `src.data_pipeline.description_parsing.parse_desc_df` 从岗位描述里切出 `任职要求_items_text`
 2. 以“任职要求优先，RAG 匹配文本兜底”的方式构造职业匹配查询文本
 3. 使用本地 BGE 微调模型 `D:\\model\\bge-base-zh-finetuned` 做职业细类语义匹配
-4. 把解析结果与职业匹配结果统一写回 DuckDB
+4. 把解析结果与职业匹配结果统一写回 PostgreSQL
 
 写入表名来自 `config/database.yaml`:
 
@@ -16,7 +16,7 @@ skill_extraction:
 ```
 
 表中会同时保存:
-- 岗位唯一标识 `sample_row_id`
+- 岗位唯一标识 `recruitment_record_id`
 - 岗位描述切分结果
 - 任职要求文本
 - 用于职业匹配的查询文本与来源
@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from src.data_pipeline.description_parsing import parse_desc_df
+from src.db.recruitment_jobs_normalized import load_normalized_jobs_dataframe
 from src.skill_extraction.config import SkillExtractionConfig, load_skill_extraction_config
 
 if TYPE_CHECKING:
@@ -84,11 +85,17 @@ def _load_jobs_for_skill_extraction(
     config: SkillExtractionConfig,
     limit_job_rows: int | None = None,
 ) -> pd.DataFrame:
-    """复用技能词典流程的数据加载逻辑，统一生成 `sample_row_id`。"""
-    from src.skill_extraction.data_source import OccupationSampleBuilder
-
-    builder = OccupationSampleBuilder(config)
-    return builder.load_jobs(limit_job_rows=limit_job_rows)
+    """优先从统一规范层读取招聘记录。"""
+    jobs_df = load_normalized_jobs_dataframe(table_name=config.recruitment_normalized_table)
+    if limit_job_rows is not None:
+        jobs_df = jobs_df.head(int(limit_job_rows)).copy()
+    if jobs_df.empty:
+        raise ValueError("统一规范层中没有可用招聘记录。")
+    jobs_df["岗位名称"] = jobs_df["job_title"].fillna("").astype(str)
+    jobs_df["岗位描述"] = jobs_df["job_description_raw"].fillna("").astype(str)
+    jobs_df["__source_table"] = jobs_df["source_table"].fillna("").astype(str)
+    jobs_df["__source_row_number"] = jobs_df["source_row_number"]
+    return jobs_df
 
 
 def build_requirement_match_dataframe(
@@ -121,7 +128,15 @@ def build_requirement_match_dataframe(
     matcher = OccupationBGEMatcher(config)
     match_input_df = pd.concat(
         [
-            jobs_df[["sample_row_id", "__source_table", "__source_row_number", "岗位名称", "岗位描述"]].reset_index(drop=True),
+            jobs_df[
+                [
+                    "recruitment_record_id",
+                    "__source_table",
+                    "__source_row_number",
+                    "岗位名称",
+                    "岗位描述",
+                ]
+            ].reset_index(drop=True),
             parsed_df[
                 [
                     "岗位描述_清洗",
@@ -153,6 +168,8 @@ def build_requirement_match_dataframe(
         ],
         axis=1,
     )
+    result_df["source_table"] = result_df["__source_table"].fillna("").astype(str)
+    result_df["source_row_number"] = result_df["__source_row_number"]
 
     # 业务层更常用 occupation_code 这个名字，这里额外保留一份别名列。
     result_df["occupation_code"] = result_df["top1_code"].fillna("").astype(str)
@@ -170,36 +187,36 @@ def write_requirement_match_table(
     result_df: pd.DataFrame,
     config: SkillExtractionConfig,
 ) -> None:
-    """把预处理结果写入 DuckDB 指定表。
+    """把预处理结果写入 PostgreSQL 指定表。
 
-    这里使用 `CREATE OR REPLACE TABLE`，原因是:
-    - 该表本质上是可重复生成的中间数据集
-    - 每次重跑希望与当前解析规则、当前 BGE 匹配结果保持一致
+    这里使用 `if_exists='replace'`，原因是:
+    - 第一批迁移先收敛公共字段契约
+    - 当前结果表仍可由统一规范层和解析结果重新生成
     """
     if result_df.empty:
-        raise ValueError("result_df 为空，无法写入 DuckDB")
+        raise ValueError("result_df 为空，无法写入 PostgreSQL")
 
+    from src.db.postgres import create_pg_engine
+
+    logger.info("准备写入 PostgreSQL: %s", config.requirement_match_table)
+    schema_name, table_name = config.requirement_match_table.split(".", 1)
+    engine = create_pg_engine()
     try:
-        import duckdb
-    except ImportError as exc:
-        raise ImportError("缺少 duckdb 依赖，无法写入 requirement match 中间表。") from exc
+        with engine.begin() as connection:
+            result_df.to_sql(
+                name=table_name.strip('"'),
+                con=connection,
+                schema=schema_name.strip('"'),
+                if_exists="replace",
+                index=False,
+            )
+    finally:
+        engine.dispose()
 
-    logger.info("准备写入 DuckDB: %s", config.requirement_match_table)
-    with duckdb.connect(str(config.db_path)) as conn:
-        conn.execute(f"PRAGMA threads={config.duckdb_threads}")
-        conn.register("tmp_skill_extraction_requirement_matches", result_df)
-        conn.execute(
-            f"""
-            CREATE OR REPLACE TABLE {config.requirement_match_table} AS
-            SELECT * FROM tmp_skill_extraction_requirement_matches
-            """
-        )
-        conn.unregister("tmp_skill_extraction_requirement_matches")
-
-    logger.info("已写入 DuckDB 表: %s", config.requirement_match_table)
+    logger.info("已写入 PostgreSQL 表: %s", config.requirement_match_table)
 
 
-def prepare_requirement_matches_to_duckdb(
+def prepare_requirement_matches_to_postgres(
     config: SkillExtractionConfig | None = None,
     database_config_path: str | Path | None = None,
     limit_job_rows: int | None = None,
@@ -225,7 +242,7 @@ def prepare_requirement_matches_to_duckdb(
 
 def build_parser() -> argparse.ArgumentParser:
     """构建命令行参数。"""
-    parser = argparse.ArgumentParser(description="技能词典流程预处理: 任职要求切分 + 职业细类匹配 + DuckDB 入库")
+    parser = argparse.ArgumentParser(description="技能词典流程预处理: 任职要求切分 + 职业细类匹配 + PostgreSQL 入库")
     parser.add_argument(
         "--database-config",
         default=None,
@@ -262,7 +279,7 @@ def main() -> None:
     """CLI 入口。"""
     parser = build_parser()
     args = parser.parse_args()
-    prepare_requirement_matches_to_duckdb(
+    prepare_requirement_matches_to_postgres(
         database_config_path=args.database_config,
         limit_job_rows=args.limit_job_rows,
         parse_workers=args.parse_workers,

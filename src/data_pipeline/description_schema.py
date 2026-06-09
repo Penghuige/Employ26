@@ -2,7 +2,7 @@
 
 import re
 
-PARSER_VERSION = "description_parsing_v1"
+PARSER_VERSION = "description_parsing_v10"
 DEFAULT_PARSED_TABLE = "public.job_description_parsed"
 
 JOB_DESCRIPTION_CLEAN_COL = "岗位描述_清洗"
@@ -37,10 +37,10 @@ LEGACY_TO_PG_COLUMN_MAP = {
 }
 
 PG_COLUMN_ORDER = [
+    "recruitment_record_id",
     "source_platform",
     "source_table",
     "source_row_number",
-    "source_record_id",
     "job_title",
     "job_description_raw",
     "job_description_clean",
@@ -58,7 +58,9 @@ TITLE_ALIASES = {
     "岗位职责": [
         "岗位职责", "职责描述", "工作职责", "工作内容", "职位描述", "主要职责", "职责",
         "岗位描述", "岗位内容", "主要工作内容", "主要工作职责", "职位职责", "工作描述", "主要工作",
-        "职责要求", "工作范围", "职责范围", "工作职能", "工作总责", "总责",
+        "职责要求", "工作范围", "职责范围", "工作职能", "工作总责", "总责", "工作岗位",
+        "岗位", "工作职位", "工作的具体内容", "具体工作内容", "职位信息", "职位简介",
+        "本职简介", "你的日常任务", "我们需要你做什么", "希望你和我们一起", "你未来会掌握的",
         "Responsibilities", "Responsibility", "Main Responsibilities", "Job Responsibilities",
         "Key Responsibilities", "Roles and Responsibilities", "Role and Responsibility",
         "Primary Responsibilities", "Primary and Secondary Responsibilities", "Job Description",
@@ -69,12 +71,20 @@ TITLE_ALIASES = {
         "技能要求", "工作要求", "能力要求", "基本要求", "人员要求", "任职资格要求", "职责要求",
         "要求", "应聘条件", "资质要求", "申请条件", "岗位条件", "候选人要求", "职位资质", "其他要求",
         "学历要求", "岗位资格", "职位资格", "具体要求", "专业要求", "工作技能", "技能",
+        "入职条件", "招工条件", "任职条件", "申请要求", "人员条件", "应聘要求",
+        "员工要求", "司机要求", "基本要求", "厨房帮工要求", "我们需要这样的你", "我们希望你是",
+        "我们希望你是什么样的人", "任职 buff加成", "必须条件", "优先条件", "职业要求",
+        "相关要求", "招聘需求", "年龄要求",
+        "採用要求", "采用要求", "我们要找这样的人才",
         "Requirements", "Job Requirements", "Qualification", "Qualifications", "Candidate Profile",
     ],
     "福利待遇": [
         "福利待遇", "公司福利", "薪酬福利", "薪资待遇", "福利", "薪资福利", "员工福利", "待遇",
         "薪酬待遇", "员工福利", "职位福利", "待遇福利", "岗位福利", "福利保障", "薪资范围",
-        "薪资福利待遇", "薪酬福利待遇", "薪资标准", "薪酬标准",
+        "薪资福利待遇", "薪酬福利待遇", "薪资标准", "薪酬标准", "工作薪资", "薪资构成",
+        "工资待遇", "工资福利", "福利项目", "更多员工福利", "薪资面谈", "薪酬范围",
+        "小时工待遇", "正式工待遇", "其他福利", "待遇", "我们能给到您什么", "我们能为您提供",
+        "我们能提供", "你关心的福利待遇在这里", "薪酬区间", "薪资架构", "工作魅力",
     ],
     "其他信息": [
         "工作地点", "上班地点", "工作时间", "上班时间", "联系方式", "联系地址", "工作地址", "公司地址",
@@ -83,8 +93,9 @@ TITLE_ALIASES = {
         "培训", "假期福利", "社会保障", "人文关怀", "职业规划", "薪资结构", "职能类别", "关键字",
         "关键词", "交通指引", "年龄要求", "联系人", "简历投递", "职位信息", "基本信息", "重要提示",
         "公司介绍", "项目背景介绍", "职业介绍", "校招岗位", "招聘岗位", "招聘岗位和专业", "公司特色",
+        "招生简章", "公司服务", "岗位优势", "优势", "原标题",
         "About the Company", "Who we are", "Brand Introduction", "Position Title", "Job Title",
-        "友情提醒", "提醒",
+        "友情提醒", "提醒", "温馨提示",
     ],
 }
 

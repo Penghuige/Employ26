@@ -10,19 +10,19 @@ import re
 import time
 from typing import Dict, Iterable, List, Sequence, Tuple
 
-import duckdb
 import pandas as pd
 
 from ..skill_extraction.config import SkillExtractionConfig, load_skill_extraction_config
+from ..db.postgres import create_pg_engine
 from .llm_router import LLMRouter, extract_json_from_response
 
 
 logger = logging.getLogger(__name__)
 
 SOURCE_COLUMNS: Sequence[str] = (
-    "sample_row_id",
-    "__source_table",
-    "__source_row_number",
+    "recruitment_record_id",
+    "source_table",
+    "source_row_number",
     "岗位名称",
     "岗位描述_清洗",
     "任职要求_items_text",
@@ -64,7 +64,7 @@ def extract_match_text(row: Dict[str, object]) -> str:
 
 
 def build_sample_id(row: Dict[str, object], fallback_index: int) -> str:
-    for field_name in ("sample_id", "sample_row_id", "__source_row_number"):
+    for field_name in ("sample_id", "recruitment_record_id", "source_row_number"):
         value = safe_text(row.get(field_name, ""))
         if value:
             return value
@@ -79,25 +79,35 @@ def load_requirement_match_rows(
     config = config or load_skill_extraction_config()
     source_table = source_table or config.requirement_match_table
     limit_clause = f"LIMIT {int(limit)}" if limit else ""
-    with duckdb.connect(str(config.db_path), read_only=True) as conn:
-        conn.execute(f"PRAGMA threads={config.duckdb_threads}")
-        available_columns = {
-            row[0]
-            for row in conn.execute(f"DESCRIBE {source_table}").fetchall()
-        }
-        select_expressions: List[str] = []
-        for column_name in SOURCE_COLUMNS:
-            if column_name in available_columns:
-                select_expressions.append(_quote_identifier(column_name))
-            else:
-                select_expressions.append(f"NULL AS {_quote_identifier(column_name)}")
-        query = f"""
-            SELECT
-                {", ".join(select_expressions)}
-            FROM {source_table}
-            {limit_clause}
-        """
-        return conn.execute(query).df()
+    engine = create_pg_engine()
+    try:
+        with engine.connect() as connection:
+            column_query = f"""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = '{source_table.split('.', 1)[0].strip('"')}'
+                  AND table_name = '{source_table.split('.', 1)[1].strip('"')}'
+                ORDER BY ordinal_position
+            """
+            available_columns = {
+                str(row[0])
+                for row in connection.exec_driver_sql(column_query).fetchall()
+            }
+            select_expressions: List[str] = []
+            for column_name in SOURCE_COLUMNS:
+                if column_name in available_columns:
+                    select_expressions.append(_quote_identifier(column_name))
+                else:
+                    select_expressions.append(f"NULL AS {_quote_identifier(column_name)}")
+            query = f"""
+                SELECT
+                    {", ".join(select_expressions)}
+                FROM {source_table}
+                {limit_clause}
+            """
+            return pd.read_sql_query(query, connection)
+    finally:
+        engine.dispose()
 
 
 def prepare_labeling_frame(
@@ -124,8 +134,8 @@ def prepare_labeling_frame(
                 "job_title": safe_text(row.get("岗位名称", "")),
                 "occupation_title": safe_text(row.get("occupation_title", "")),
                 "occupation_code": safe_text(row.get("occupation_code", "")),
-                "source_table": safe_text(row.get("__source_table", "")),
-                "source_row_number": safe_text(row.get("__source_row_number", "")),
+                "source_table": safe_text(row.get("source_table", "")),
+                "source_row_number": safe_text(row.get("source_row_number", "")),
                 "text": text[:max_text_chars],
             }
         )

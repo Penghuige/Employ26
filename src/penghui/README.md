@@ -15,30 +15,65 @@
 
 大多数脚本依赖以下数据：
 
-- 标注数据：`data/project-4-at-2026-05-27-01-51-7cceb9ba.json`
-- DeepSeek 重标结果：`output/deepseek_relabel/deepseek_relabel_raw.jsonl`
-- 职业词典：`data/中国职业大典.xlsx`
-- 基础向量模型：`config.paths.get_project_paths().bge_model_path`
+- 标注数据：PostgreSQL `annotations.label_studio_tasks_v2`
+- 其中历史任务的正式招聘身份应优先读取 `recruitment_record_id`；旧 `row_id` 只表示导出快照行号，不再代表招聘源主键
+- 在 `src/penghui/common.py` 的公共加载口径里，`task_id` 只表示标注任务身份，不能替代 `recruitment_record_id`
+- DeepSeek 重标结果：优先 PostgreSQL `annotations.deepseek_relabel_raw`，首次缺表或空表时会从 `output/deepseek_relabel/deepseek_relabel_raw.jsonl` 回填
+- 职业词典：PostgreSQL `public.occ_dict_detailed`
+- 基础向量模型：`config.paths.get_project_paths().bge_model_path` 或环境变量 `EMPLOYDATA_BGE_MODEL_PATH`
 
 常见输出位置：
 
-- 文本报告：`output/*.txt`
-- JSON 结果：`output/*.json`
-- 微调模型与评估文件：`output/rag_round2_training/`
+- 文本报告：`output/penghui/*.txt`
+- JSON 结果：`output/penghui/*.json`
+- 微调模型与评估文件：`output/penghui/rag_round2_training/`
 
 ## 3. 脚本总览
 
 | 脚本 | 主要作用 | 典型输出 | 当前定位 |
 | --- | --- | --- | --- |
-| `reproduce_round2_validity.py` | 复现第二轮数据有效性分析 | `output/round2_validity_report.txt` | 数据集整体体检 |
-| `deep_analysis_round2.py` | 统计任务级/标注级 TopK 命中与多数意见情况 | 控制台输出 | 轻量分析脚本 |
-| `disagreement_deep_analysis.py` | 深挖人类与 DeepSeek 分歧模式 | `output/disagreement_analysis.txt` | 分歧诊断 |
-| `multidim_validation.py` | 用多信号给样本打质量分层 | `output/multidim_validation_report.txt`、`output/multidim_validation_results.json` | 标注质检 |
-| `train_rag_round2.py` | v1：直接用第二轮标注训练基础检索模型 | 模型目录、`evaluation_results.json` | 基线微调方案 |
-| `train_rag_round2_v3.py` | v3：用 Gold/Silver 样本训练 | 模型目录、`evaluation_v3.json` | 噪声过滤方案 |
-| `train_rag_round2_v4.py` | v4：按分歧与语义排名筛正负样本 | 模型目录、`evaluation_v4.json` | 中等强度过滤方案 |
-| `train_rag_weighted.py` | 置信分层加权训练 | 模型目录、`evaluation_weighted.json` | 质量加权方案 |
-| `eval_models_multimetric.py` | 比较 baseline、v1、v3、v4 多项指标 | `output/model_comparison.txt` | 模型横向评估 |
+| `reproduce_round2_validity.py` | 复现第二轮数据有效性分析 | `output/penghui/round2_validity_report.txt` | 数据集整体体检 |
+| `deep_analysis_round2.py` | 统计任务级/标注级 TopK 命中与多数意见情况 | `output/penghui/deep_analysis_round2.txt` | 轻量分析脚本 |
+| `disagreement_deep_analysis.py` | 深挖人类与 DeepSeek 分歧模式 | `output/penghui/disagreement_analysis.txt` | 分歧诊断 |
+| `multidim_validation.py` | 用多信号给样本打质量分层 | `output/penghui/multidim_validation_report.txt`、`output/penghui/multidim_validation_results.json` | 标注质检 |
+| `train_rag_round2.py` | v1：直接用第二轮标注训练基础检索模型 | 模型目录、`output/penghui/rag_round2_training/evaluation_results.json` | 基线微调方案 |
+| `train_rag_round2_v3.py` | v3：用 Gold/Silver 样本训练 | 模型目录、`output/penghui/rag_round2_training/evaluation_v3.json` | 噪声过滤方案 |
+| `train_rag_round2_v4.py` | v4：按分歧与语义排名筛正负样本 | 模型目录、`output/penghui/rag_round2_training/evaluation_v4.json` | 中等强度过滤方案 |
+| `train_rag_weighted.py` | 置信分层加权训练 | 模型目录、`output/penghui/rag_round2_training/evaluation_weighted.json` | 质量加权方案 |
+| `eval_models_multimetric.py` | 比较 baseline、v1、v3、v4 多项指标 | `output/penghui/model_comparison.txt` | 模型横向评估 |
+
+## 3.1 当前冻结基线
+
+当前路线已经明确把“基线”定义成一套可复现配方，而不是单个模型目录。正式说明见：
+
+- 基线配方文档：[docs/penghui-retrieval-baseline.md](/d:/PythonProjects/Employ26/docs/penghui-retrieval-baseline.md)
+- ADR: [docs/adr/0002-freeze-penghui-baseline-on-v1-task-table-recipe.md](/d:/PythonProjects/Employ26/docs/adr/0002-freeze-penghui-baseline-on-v1-task-table-recipe.md)
+
+当前冻结结论：
+
+- 基线训练配方以 `train_rag_round2.py` 的 `v1` 为准
+- 基线数据契约暂时冻结在 `annotations.label_studio_tasks_v2`
+- 当前输入字段口径仍是 `annotations_completed` + `data_raw` 的任务主表解析结果
+- `annotations_completed_jsonb`、`data_raw_jsonb` 与 `annotations.v_label_studio_task_annotations_v2` 属于后续可挑战的“数据契约升级方案”，不与基线冻结动作同时进行
+- 正式定胜负以 `eval_models_multimetric.py` 及 `output/penghui/model_comparison.txt` 为准
+- 当前综合最强模型是 `output/penghui/rag_round2_training/bge-large-round2-finetuned`
+
+当前最小 CLI 契约：
+
+- `train_rag_round2.py`
+  - `--base-model-path`
+  - `--output-model-name`
+  - `--run-label`
+- `eval_models_multimetric.py`
+  - `--model NAME=PATH`，可重复传入
+
+命名约定从下一次新跑开始生效：
+
+- 推荐目录名：`配方名 + 底座名`
+- 例如：
+  - `v1-bge-large`
+  - `v1-bge-m3`
+- 历史目录如 `bge-large-round2-finetuned` 先保留，不主动重命名
 
 ## 4. 各脚本说明
 
@@ -189,7 +224,7 @@
 
 - 测试集定义为“所有未入选 Gold/Silver 的样本”，天然更难，和 v1 结果并不完全同口径
 - 仍与其他训练脚本重复了多数数据加载与解析逻辑
-- 依赖 `output/rag_round2_training/bge-large-round2-finetuned` 作为对比模型时，没有显式检查该模型是否存在
+- 依赖 `output/penghui/rag_round2_training/bge-large-round2-finetuned` 作为对比模型时，没有显式检查该模型是否存在
 
 建议修复：
 
@@ -292,6 +327,38 @@
 2. 再看 `multidim_validation.py` 和 `disagreement_deep_analysis.py`
 3. 然后看 `train_rag_round2.py`、`train_rag_round2_v3.py`、`train_rag_round2_v4.py`、`train_rag_weighted.py`
 4. 最后用 `eval_models_multimetric.py` 做横向对比
+
+补充说明：
+
+- 各训练脚本输出的 `evaluation_*.json` 主要用于各自实验内部诊断
+- 这些文件的测试集口径不同，不适合作为 `v1 / v3 / v4 / weighted / bge-m3` 的正式横向比较依据
+- 若要比较不同底座或不同训练方案，应统一回到 `eval_models_multimetric.py`
+
+## 5.1 第一轮 `bge-m3` 挑战运行方式
+
+推荐按“单变量挑战”执行：
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+.\.conda\python.exe -m src.penghui.train_rag_round2 `
+  --base-model-path D:\model\bge-m3 `
+  --output-model-name v1-bge-m3 `
+  --run-label v1-bge-m3
+```
+
+训练完成后，用统一评估把挑战者加入比较：
+
+```powershell
+$env:EMPLOYDATA_BGE_MODEL_PATH='D:\model\bge-large-zh-v1.5'
+$env:PYTHONIOENCODING='utf-8'
+.\.conda\python.exe -m src.penghui.eval_models_multimetric `
+  --model v1-bge-m3=output/penghui/rag_round2_training/v1-bge-m3
+```
+
+说明：
+
+- 第一轮挑战只替换底座模型，不同时修改样本构造、split、超参数和统一评估口径
+- 若 `bge-m3` 要取代当前基线，应至少在 `candidate_acc` 与 `mrr` 上同时不弱于当前 `v1`
 
 ## 6. 当前共性问题
 

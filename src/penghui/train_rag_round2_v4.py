@@ -160,7 +160,8 @@ def main() -> None:
     for i, item in enumerate(raw_data):
         if i % 2000 == 0:
             print(f"  Progress: {i}/{len(raw_data)}")
-        tid = item["id"]
+        tid = item["task_id"]
+        recruitment_record_id = item["recruitment_record_id"]
         data = item["data"]
         anns = item["annotations"]
         jt = str(data.get("job_title", "")).strip()
@@ -187,7 +188,7 @@ def main() -> None:
             n_skipped_no_ds += 1
             # 无DS的留作测试
             test_pairs.append({"anchor": anchor, "code": hum_code,
-                               "positive": c2text[hum_code], "task_id": tid})
+                               "positive": c2text[hum_code], "task_id": tid, "recruitment_record_id": recruitment_record_id})
             continue
 
         ds_agrees = (ds["deepseek_choice"] == hum_choice)
@@ -196,7 +197,7 @@ def main() -> None:
         sem_rank = compute_semantic_rank(anchor, hum_code, occ_codes, occ_emb, model)
 
         pair = {
-            "task_id": tid, "anchor": anchor,
+            "task_id": tid, "recruitment_record_id": recruitment_record_id, "anchor": anchor,
             "code": hum_code, "positive": c2text[hum_code],
             "job_title": jt, "ds_agrees": ds_agrees, "sem_rank": sem_rank,
             "hum_choice": hum_choice, "ds_choice": ds["deepseek_choice"],
