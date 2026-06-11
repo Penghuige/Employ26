@@ -10,8 +10,8 @@
 优先使用统一 CLI：
 
 ```bash
-python -m src.analysis.cli structured --with-integration --with-excel
-python -m src.analysis.cli requirements
+python -m src.analysis.cli structured run --with-integration --with-excel
+python -m src.analysis.cli requirements run
 ```
 
 ### 1. 结构化统计主链路
@@ -19,7 +19,7 @@ python -m src.analysis.cli requirements
 推荐命令：
 
 ```bash
-python -m src.analysis.cli structured
+python -m src.analysis.cli structured run
 ```
 
 常用选项：
@@ -28,6 +28,7 @@ python -m src.analysis.cli structured
 - `--sample`：与 `--with-integration` 搭配，使用样本数据
 - `--with-excel`：最后运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)
 - `--skip-standardized`：跳过 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)
+- `--output-dir`：显式指定结构化统计批次输出目录
 
 单脚本调试顺序：
 
@@ -43,7 +44,7 @@ python -m src.analysis.cli structured
 推荐命令：
 
 ```bash
-python -m src.analysis.cli requirements
+python -m src.analysis.cli requirements run
 ```
 
 单脚本调试入口：
@@ -101,7 +102,7 @@ python -m src.db.analysis_lexicon --ensure-schema
 python -m src.db.analysis_lexicon --bootstrap-v1 --version v2_curated_requirement_analysis
 python -m src.db.requirement_constraint_facts --ensure-schema
 python -m src.data_pipeline.backfill_recruitment_jobs_normalized
-python -m src.analysis.cli requirements
+python -m src.analysis.cli requirements run
 ```
 
 结构化统计主链路的 Markdown 报告产物：
@@ -109,6 +110,21 @@ python -m src.analysis.cli requirements
 - `output/reports/职业类别薪资分析报告.md`
 - `output/reports/学历需求分布分析报告.md`
 - `output/reports/行业景气度分析报告.md`
+- `output/reports/结构化维度补充分析报告.md`
+
+结构化统计主链路默认批次目录：
+
+- `output/reports/structured_analysis_{mm-dd}/`
+
+新增规范 CSV 产物示例：
+
+- `salary_by_occupation_month.csv`
+- `salary_by_education_occupation.csv`
+- `education_by_occupation_month.csv`
+- `industry_monthly_jobs.csv`
+- `experience_by_occupation.csv`
+- `company_size_by_city_industry.csv`
+- `city_occupation_demand.csv`
 
 ## 职业词典四表的当前建议
 

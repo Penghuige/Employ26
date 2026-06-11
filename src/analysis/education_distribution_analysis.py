@@ -18,23 +18,25 @@
 - `occupation_category`
 
 输出文件:
-- `output/reports/职业类别年度学历分布.csv`
-- `output/reports/职业年度学历分布.csv`
-- `output/reports/职业类别月度学历分布.csv`
-- `output/reports/职业月度学历分布.csv`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_category_year.csv`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_year.csv`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_category_month.csv`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_month.csv`
 - `output/reports/学历需求分布分析报告.md`
 
 运行方式:
 - `python -m src.analysis.education_distribution_analysis`
-- 或 `python src/analysis/education_distribution_analysis.py`
 
 维护说明:
 - 当前脚本使用的是较新的 `output/integrated` 数据口径，不属于旧版关键词分析脚本。
 """
 
-import pandas as pd
-from pathlib import Path
 import logging
+from pathlib import Path
+
+import pandas as pd
+
+from src.analysis.structured_common import load_integrated_data, write_csv_with_legacy_copy
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -43,12 +45,13 @@ logger = logging.getLogger(__name__)
 class EducationDistributionAnalyzer:
     """学历需求分布分析器"""
     
-    def __init__(self, base_dir=None, min_jobs_monthly=5):
+    def __init__(self, base_dir=None, min_jobs_monthly=5, output_dir=None):
         """初始化
         
         Args:
             base_dir: 项目根目录
             min_jobs_monthly: 月度职业层面最小岗位数阈值（默认5）
+            output_dir: 可选输出目录
         """
         if base_dir is None:
             base_dir = Path(__file__).parent.parent.parent
@@ -57,7 +60,7 @@ class EducationDistributionAnalyzer:
         
         self.base_dir = base_dir
         self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else base_dir / 'output' / 'reports'
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.min_jobs_monthly = min_jobs_monthly
@@ -108,13 +111,12 @@ class EducationDistributionAnalyzer:
         """加载整合后的数据"""
         logger.info("加载数据...")
         
-        all_data = []
-        for csv_file in self.data_dir.glob('*_整合_*.csv'):
-            logger.info(f"  读取: {csv_file.name}")
-            df = pd.read_csv(csv_file, encoding='utf-8')
-            all_data.append(df)
-        
-        df = pd.concat(all_data, ignore_index=True)
+        df, input_files = load_integrated_data(
+            self.data_dir,
+            required_columns={'学历要求', 'publish_month', 'occupation_core', 'occupation_category'},
+        )
+        for filename in input_files:
+            logger.info(f"  读取: {filename}")
         logger.info(f"总数据: {len(df):,} 行")
         
         # 标准化学历
@@ -291,15 +293,43 @@ class EducationDistributionAnalyzer:
         """保存分析报告"""
         logger.info("\n保存分析报告...")
         
-        # 保存CSV文件
-        df_cat_year.to_csv(self.output_dir / '职业类别年度学历分布.csv', 
-                          index=False, encoding='utf-8-sig')
-        df_occ_year.to_csv(self.output_dir / '职业年度学历分布.csv',
-                          index=False, encoding='utf-8-sig')
-        df_cat_month.to_csv(self.output_dir / '职业类别月度学历分布.csv',
-                           index=False, encoding='utf-8-sig')
-        df_occ_month.to_csv(self.output_dir / '职业月度学历分布.csv',
-                           index=False, encoding='utf-8-sig')
+        # 保存 CSV 文件：英文规范列名为主，中文历史文件名兼容旧汇总脚本。
+        category_year_export = df_cat_year.rename(
+            columns={'年度': 'year', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            category_year_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_category_year.csv',
+            legacy_filename='职业类别年度学历分布.csv',
+        )
+        occupation_year_export = df_occ_year.rename(
+            columns={'年度': 'year', '职业': 'occupation_core', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            occupation_year_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_year.csv',
+            legacy_filename='职业年度学历分布.csv',
+        )
+        category_month_export = df_cat_month.rename(
+            columns={'月度': 'publish_month', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            category_month_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_category_month.csv',
+            legacy_filename='职业类别月度学历分布.csv',
+        )
+        occupation_month_export = df_occ_month.rename(
+            columns={'月度': 'publish_month', '职业': 'occupation_core', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            occupation_month_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_month.csv',
+            legacy_filename='职业月度学历分布.csv',
+        )
         
         logger.info("  ✅ CSV文件已保存")
         
@@ -406,10 +436,10 @@ class EducationDistributionAnalyzer:
         logger.info("✅ 学历需求分布分析完成!")
         logger.info("=" * 80)
         logger.info("\n生成的文件:")
-        logger.info("  - output/reports/职业类别年度学历分布.csv")
-        logger.info("  - output/reports/职业年度学历分布.csv")
-        logger.info("  - output/reports/职业类别月度学历分布.csv")
-        logger.info("  - output/reports/职业月度学历分布.csv")
+        logger.info("  - education_by_occupation_category_year.csv")
+        logger.info("  - education_by_occupation_year.csv")
+        logger.info("  - education_by_occupation_category_month.csv")
+        logger.info("  - education_by_occupation_month.csv")
         logger.info("  - output/reports/学历需求分布分析报告.md")
 
 

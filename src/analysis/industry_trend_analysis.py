@@ -15,23 +15,24 @@
 - `industry_clean`
 
 输出文件:
-- `output/reports/城市行业月度数据.csv`
-- `output/reports/行业月度数据.csv`
+- `output/reports/structured_analysis_{mm-dd}/city_industry_monthly_jobs.csv`
+- `output/reports/structured_analysis_{mm-dd}/industry_monthly_jobs.csv`
 - `output/reports/行业景气度分析报告.md`
 - `output/reports/行业景气度分析图.html`
 
 运行方式:
 - `python -m src.analysis.industry_trend_analysis`
-- 或 `python src/analysis/industry_trend_analysis.py`
 
 维护说明:
 - 当前脚本属于新版分析链路，和 `preprocessing/integrate_occupation.py` 的标准化行业字段直接配套。
 """
 
-import pandas as pd
-from pathlib import Path
 import logging
-from collections import defaultdict
+from pathlib import Path
+
+import pandas as pd
+
+from src.analysis.structured_common import load_integrated_data, write_csv_with_legacy_copy
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 class IndustryTrendAnalyzer:
     """行业景气度分析器"""
     
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, output_dir=None):
         """初始化"""
         if base_dir is None:
             base_dir = Path(__file__).parent.parent.parent
@@ -49,7 +50,7 @@ class IndustryTrendAnalyzer:
         
         self.base_dir = base_dir
         self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else base_dir / 'output' / 'reports'
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("行业景气度分析器初始化完成")
@@ -58,13 +59,12 @@ class IndustryTrendAnalyzer:
         """加载整合后的数据"""
         logger.info("加载数据...")
         
-        all_data = []
-        for csv_file in self.data_dir.glob('*_整合_*.csv'):
-            logger.info(f"  读取: {csv_file.name}")
-            df = pd.read_csv(csv_file, encoding='utf-8')
-            all_data.append(df)
-        
-        df = pd.concat(all_data, ignore_index=True)
+        df, input_files = load_integrated_data(
+            self.data_dir,
+            required_columns={'publish_month', 'city_clean', 'industry_clean'},
+        )
+        for filename in input_files:
+            logger.info(f"  读取: {filename}")
         logger.info(f"总数据: {len(df):,} 行")
         
         # 过滤有效数据
@@ -112,6 +112,16 @@ class IndustryTrendAnalyzer:
         
         # 只保留招聘量>=10的数据点
         industry_monthly = industry_monthly[industry_monthly['job_count'] >= 10]
+        industry_monthly = industry_monthly.sort_values(['industry_clean', 'publish_month']).copy()
+        industry_monthly['previous_month_job_count'] = (
+            industry_monthly.groupby('industry_clean')['job_count'].shift(1)
+        )
+        industry_monthly['month_over_month_change'] = (
+            industry_monthly['job_count'] - industry_monthly['previous_month_job_count']
+        )
+        industry_monthly['month_over_month_growth_rate'] = (
+            industry_monthly['month_over_month_change'] / industry_monthly['previous_month_job_count']
+        )
         
         # 找出Top行业
         industry_total = df.groupby('industry_clean').size().sort_values(ascending=False)
@@ -143,11 +153,19 @@ class IndustryTrendAnalyzer:
         
         logger.info(f"报告已保存: {report_file}")
         
-        # 保存CSV数据
-        trend_stats.to_csv(self.output_dir / '城市行业月度数据.csv', 
-                          index=False, encoding='utf-8-sig')
-        industry_monthly.to_csv(self.output_dir / '行业月度数据.csv',
-                               index=False, encoding='utf-8-sig')
+        # 保存 CSV 数据：英文规范文件名为主，中文历史文件名兼容旧汇总脚本。
+        write_csv_with_legacy_copy(
+            trend_stats,
+            self.output_dir,
+            canonical_filename='city_industry_monthly_jobs.csv',
+            legacy_filename='城市行业月度数据.csv',
+        )
+        write_csv_with_legacy_copy(
+            industry_monthly,
+            self.output_dir,
+            canonical_filename='industry_monthly_jobs.csv',
+            legacy_filename='行业月度数据.csv',
+        )
         
         logger.info("数据文件已保存")
     
