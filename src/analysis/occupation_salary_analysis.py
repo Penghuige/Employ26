@@ -3,7 +3,7 @@
 
 用途:
 - 基于 `output/integrated/*_整合_*.csv` 分析职业类别与职业核心词的薪资分布。
-- 同时生成月度趋势、学历交叉统计、文本报告、CSV 明细和 HTML 图表。
+- 同时生成月度趋势、学历交叉统计、Markdown 报告、CSV 明细和 HTML 图表。
 - 这是当前目录里最核心的薪资分析脚本，优先级高于旧版 `salary_analysis.py`。
 
 前置依赖:
@@ -18,7 +18,7 @@
 - `学历要求`
 
 输出文件:
-- `output/reports/职业类别薪资分析报告.txt`
+- `output/reports/职业类别薪资分析报告.md`
 - `output/reports/职业类别月度薪资数据.csv`
 - `output/reports/职业月度薪资数据.csv`
 - `output/reports/学历职业类别薪资数据.csv`
@@ -290,43 +290,37 @@ class OccupationSalaryAnalyzer:
         """保存分析报告"""
         logger.info("\n保存分析报告...")
         
-        report_file = self.output_dir / '职业类别薪资分析报告.txt'
+        report_file = self.output_dir / '职业类别薪资分析报告.md'
         with open(report_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 80 + "\n")
-            f.write("广东省招聘数据 - 职业类别薪资分析报告\n")
-            f.write("=" * 80 + "\n\n")
+            f.write("# 广东省招聘数据 - 职业类别薪资分析报告\n\n")
             
-            f.write("一、职业类别薪资统计\n")
-            f.write("-" * 80 + "\n")
+            f.write("## 一、职业类别薪资统计\n\n")
             for category, row in category_stats.iterrows():
                 f.write(f"{category:20s} - 平均: {row['平均薪资']:10,.0f}元 | "
                        f"中位数: {row['中位数薪资']:10,.0f}元 | 岗位数: {int(row['岗位数量']):8,}\n")
             
-            f.write("\n\n二、职业核心词薪资排行 (Top 50)\n")
-            f.write("-" * 80 + "\n")
+            f.write("\n\n## 二、职业核心词薪资排行 (Top 50)\n\n")
             for i, (core, row) in enumerate(core_stats.head(50).iterrows(), 1):
                 f.write(f"{i:3d}. {core:30s} - 平均: {row['平均薪资']:10,.0f}元 | "
                        f"中位数: {row['中位数薪资']:10,.0f}元 | 岗位数: {int(row['岗位数量']):8,}\n")
             
             if edu_category_stats is not None:
-                f.write("\n\n三、学历×职业类别薪资分析\n")
-                f.write("-" * 80 + "\n")
+                f.write("\n\n## 三、学历×职业类别薪资分析\n\n")
                 for edu in ['博士', '硕士', '本科', '大专']:
                     edu_data = edu_category_stats[edu_category_stats['学历'] == edu]
                     if len(edu_data) > 0:
-                        f.write(f"\n{edu}:\n")
+                        f.write(f"\n### {edu}\n")
                         edu_data_sorted = edu_data.sort_values('平均薪资', ascending=False)
                         for _, row in edu_data_sorted.head(15).iterrows():
                             f.write(f"  {row['occupation_category']:20s} - 平均: {row['平均薪资']:10,.0f}元 | "
                                    f"岗位数: {int(row['岗位数量']):6,}\n")
             
             if edu_occupation_stats is not None:
-                f.write("\n\n四、学历×职业薪资分析（主口径）\n")
-                f.write("-" * 80 + "\n")
+                f.write("\n\n## 四、学历×职业薪资分析（主口径）\n\n")
                 for edu in ['博士', '硕士', '本科', '大专']:
                     edu_data = edu_occupation_stats[edu_occupation_stats['学历'] == edu]
                     if len(edu_data) > 0:
-                        f.write(f"\n{edu}:\n")
+                        f.write(f"\n### {edu}\n")
                         edu_data_sorted = edu_data.sort_values('平均薪资', ascending=False)
                         for _, row in edu_data_sorted.head(15).iterrows():
                             f.write(f"  {row['occupation_core']:30s} - 平均: {row['平均薪资']:10,.0f}元 | "

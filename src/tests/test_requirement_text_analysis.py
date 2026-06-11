@@ -229,7 +229,7 @@ def test_analyze_requirement_texts_writes_phase2_outputs(monkeypatch, tmp_path: 
         "constraint_by_city_industry.csv",
         "template_noise_report.csv",
         "requirement_stringency_index.csv",
-        "report.txt",
+        "report.md",
     ):
         assert (tmp_path / filename).exists()
 
@@ -250,6 +250,6 @@ def test_analyze_requirement_texts_writes_phase2_outputs(monkeypatch, tmp_path: 
     r3 = stringency_df[stringency_df["recruitment_record_id"] == "r3"].iloc[0]
     assert int(r1["stringency_score"]) > int(r3["stringency_score"])
 
-    report_text = (tmp_path / "report.txt").read_text(encoding="utf-8")
+    report_text = (tmp_path / "report.md").read_text(encoding="utf-8")
     assert "hard skill / soft skill" in report_text
     assert "六、模板噪声报告" in report_text

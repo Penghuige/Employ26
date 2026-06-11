@@ -584,7 +584,9 @@ def _build_report_text(
         else pd.DataFrame()
     )
     lines = [
-        "一、运行摘要",
+        "# Requirement Text 约束抽取与分析报告",
+        "",
+        "## 一、运行摘要",
         f"- extractor_version: {manifest['extractor_version']}",
         f"- lexicon_version: {manifest['lexicon_version']}",
         f"- total_normalized_records: {manifest['total_normalized_records']}",
@@ -592,29 +594,29 @@ def _build_report_text(
         f"- records_with_constraints: {manifest['records_with_constraints']}",
         f"- constraint_fact_rows: {manifest['constraint_fact_rows']}",
         "",
-        "结论注记",
+        "## 结论注记",
         "- 本期正式结论聚焦 requirement 约束、模板噪声与招聘门槛强度，不包含 hard skill / soft skill 分类研究。",
         "- hard skill / soft skill 继续列为 TODO，后续单独做更细的词典治理与标注验证。",
         "",
-        "二、样本覆盖率与抽取诊断",
+        "## 二、样本覆盖率与抽取诊断",
         diagnostics_df.to_string(index=False),
         "",
-        "三、约束维度频率",
+        "## 三、约束维度频率",
         dimension_df.head(params.top_n).to_string(index=False) if not dimension_df.empty else "无结果",
         "",
-        "四、约束值分布",
+        "## 四、约束值分布",
         value_df.head(params.top_n).to_string(index=False) if not value_df.empty else "无结果",
         "",
-        "五、城市 / 行业 / 公司规模差异",
+        "## 五、城市 / 行业 / 公司规模差异",
         top_city_industry.to_string(index=False) if not top_city_industry.empty else "无结果",
         "",
-        "六、模板噪声报告",
+        "## 六、模板噪声报告",
         noise_df.head(params.top_n).to_string(index=False) if not noise_df.empty else "无结果",
         "",
-        "七、招聘门槛强度",
+        "## 七、招聘门槛强度",
         avg_stringency.to_string(index=False) if not avg_stringency.empty else "无结果",
         "",
-        "八、说明",
+        "## 八、说明",
         "- PostgreSQL `public.requirement_constraint_facts` 已作为 Phase 2 正式中间层。",
         "- `duties_text` 本期继续只用于诊断，不并入正式约束事实。",
     ]
@@ -762,7 +764,7 @@ def analyze_requirement_texts(
     breakdown_df.to_csv(output_dir / "constraint_by_city_industry.csv", index=False, encoding="utf-8-sig")
     noise_df.to_csv(output_dir / "template_noise_report.csv", index=False, encoding="utf-8-sig")
     stringency_df.to_csv(output_dir / "requirement_stringency_index.csv", index=False, encoding="utf-8-sig")
-    (output_dir / "report.txt").write_text(
+    (output_dir / "report.md").write_text(
         _build_report_text(
             manifest=manifest,
             diagnostics_df=diagnostics_df,

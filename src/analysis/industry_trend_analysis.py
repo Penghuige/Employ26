@@ -3,7 +3,7 @@
 
 用途:
 - 基于 `output/integrated/*_整合_*.csv` 统计城市 × 行业 × 月度的招聘量变化。
-- 输出文本报告、CSV 明细和 HTML 图表，用于观察行业热度与城市行业结构。
+- 输出 Markdown 报告、CSV 明细和 HTML 图表，用于观察行业热度与城市行业结构。
 
 前置依赖:
 - 先运行 `src/preprocessing/integrate_occupation.py`，确保整合数据中存在
@@ -17,7 +17,7 @@
 输出文件:
 - `output/reports/城市行业月度数据.csv`
 - `output/reports/行业月度数据.csv`
-- `output/reports/行业景气度分析报告.txt`
+- `output/reports/行业景气度分析报告.md`
 - `output/reports/行业景气度分析图.html`
 
 运行方式:
@@ -126,19 +126,15 @@ class IndustryTrendAnalyzer:
         """保存分析报告"""
         logger.info("\n保存分析报告...")
         
-        report_file = self.output_dir / '行业景气度分析报告.txt'
+        report_file = self.output_dir / '行业景气度分析报告.md'
         with open(report_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 80 + "\n")
-            f.write("广东省招聘数据 - 行业景气度分析报告\n")
-            f.write("=" * 80 + "\n\n")
+            f.write("# 广东省招聘数据 - 行业景气度分析报告\n\n")
             
-            f.write("一、行业整体招聘量排行 (Top 30)\n")
-            f.write("-" * 80 + "\n")
+            f.write("## 一、行业整体招聘量排行 (Top 30)\n\n")
             for i, (industry, count) in enumerate(industry_total.head(30).items(), 1):
                 f.write(f"{i:3d}. {industry:40s}: {count:10,} 个岗位\n")
             
-            f.write("\n\n二、各城市主要行业分布\n")
-            f.write("-" * 80 + "\n")
+            f.write("\n\n## 二、各城市主要行业分布\n\n")
             for city in sorted(city_industry_total['city_clean'].unique()):
                 city_data = city_industry_total[city_industry_total['city_clean'] == city].head(10)
                 f.write(f"\n{city}:\n")

@@ -22,7 +22,7 @@
 - `output/reports/职业年度学历分布.csv`
 - `output/reports/职业类别月度学历分布.csv`
 - `output/reports/职业月度学历分布.csv`
-- `output/reports/学历需求分布分析报告.txt`
+- `output/reports/学历需求分布分析报告.md`
 
 运行方式:
 - `python -m src.analysis.education_distribution_analysis`
@@ -303,16 +303,13 @@ class EducationDistributionAnalyzer:
         
         logger.info("  ✅ CSV文件已保存")
         
-        # 生成文本报告
-        report_file = self.output_dir / '学历需求分布分析报告.txt'
+        # 生成 Markdown 报告
+        report_file = self.output_dir / '学历需求分布分析报告.md'
         with open(report_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 80 + "\n")
-            f.write("广东省招聘数据 - 学历需求分布分析报告\n")
-            f.write("=" * 80 + "\n\n")
+            f.write("# 广东省招聘数据 - 学历需求分布分析报告\n\n")
             
             # 一、职业类别年度学历分布
-            f.write("一、职业类别年度学历分布\n")
-            f.write("-" * 80 + "\n\n")
+            f.write("## 一、职业类别年度学历分布\n\n")
             
             for year in sorted(df_cat_year['年度'].unique()):
                 f.write(f"【{year}年】\n")
@@ -328,8 +325,7 @@ class EducationDistributionAnalyzer:
                 f.write("\n")
             
             # 二、职业年度学历分布（Top 20职业）
-            f.write("\n二、职业年度学历分布（Top 20职业示例）\n")
-            f.write("-" * 80 + "\n\n")
+            f.write("\n## 二、职业年度学历分布（Top 20职业示例）\n\n")
             
             # 统计各职业总岗位数
             top_occupations = df_occ_year.groupby('职业')['岗位数量'].sum().nlargest(20).index
@@ -353,8 +349,7 @@ class EducationDistributionAnalyzer:
                 f.write("\n")
             
             # 三、学历需求趋势分析
-            f.write("\n三、学历需求趋势分析（按职业类别）\n")
-            f.write("-" * 80 + "\n\n")
+            f.write("\n## 三、学历需求趋势分析（按职业类别）\n\n")
             
             for category in df_cat_year['职业类别'].unique():
                 f.write(f"【{category}】\n")
@@ -372,8 +367,7 @@ class EducationDistributionAnalyzer:
                 f.write("\n")
             
             # 四、数据说明
-            f.write("\n四、数据说明\n")
-            f.write("-" * 80 + "\n")
+            f.write("\n## 四、数据说明\n\n")
             f.write(f"1. 职业类别年度学历分布: {len(df_cat_year):,} 个数据点\n")
             f.write(f"2. 职业年度学历分布: {len(df_occ_year):,} 个数据点\n")
             f.write(f"3. 职业类别月度学历分布: {len(df_cat_month):,} 个数据点\n")
@@ -388,7 +382,7 @@ class EducationDistributionAnalyzer:
             f.write("   - 明确学历: 博士、硕士、本科、大专、高中、中专\n")
             f.write("   - 其他: 学历不限、未明确\n")
         
-        logger.info(f"  ✅ 文本报告已保存: {report_file}")
+        logger.info(f"  ✅ Markdown报告已保存: {report_file}")
     
     def run(self):
         """运行完整分析"""
@@ -416,7 +410,7 @@ class EducationDistributionAnalyzer:
         logger.info("  - output/reports/职业年度学历分布.csv")
         logger.info("  - output/reports/职业类别月度学历分布.csv")
         logger.info("  - output/reports/职业月度学历分布.csv")
-        logger.info("  - output/reports/学历需求分布分析报告.txt")
+        logger.info("  - output/reports/学历需求分布分析报告.md")
 
 
 def main():

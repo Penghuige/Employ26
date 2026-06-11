@@ -4,7 +4,7 @@
 生成 Excel 汇总报告。
 
 用途:
-- 将 `output/reports` 下已经生成的 CSV 与文本报告整理到一个总 Excel 中，便于交付或人工浏览。
+- 将 `output/reports` 下已经生成的 CSV 与 Markdown 报告整理到一个总 Excel 中，便于交付或人工浏览。
 - 这是“二次汇总脚本”，本身不直接分析原始岗位数据。
 
 前置依赖:
@@ -20,7 +20,7 @@
 - `output/reports/学历职业类别薪资数据.csv`
 - `output/reports/学历职业薪资数据.csv`
 - `output/reports/学历月度趋势.csv`
-- 以及目录中的多个 `*.txt` 分析报告
+- 以及目录中的多个 `*.md` 分析报告
 
 输出文件:
 - `output/reports/广东省招聘数据分析汇总报告.xlsx`
@@ -112,7 +112,7 @@ class ExcelReportGenerator:
             # 报告摘要
             # ========================================
             
-            # 10. 添加文本报告摘要
+            # 10. 添加 Markdown 报告摘要
             self._add_text_summary(writer)
         
         logger.info(f"\n✅ Excel汇总报告已生成: {self.output_file}")
@@ -269,24 +269,32 @@ class ExcelReportGenerator:
             adjusted_width = min(max_length + 2, 50)
             worksheet.column_dimensions[column_letter].width = adjusted_width
     
+    def _resolve_report_file(self, markdown_filename):
+        """优先读取 Markdown 报告，兼容历史 TXT 报告。"""
+        markdown_path = self.reports_dir / markdown_filename
+        if markdown_path.exists():
+            return markdown_path
+        legacy_path = markdown_path.with_suffix('.txt')
+        if legacy_path.exists():
+            return legacy_path
+        return None
+    
     def _add_text_summary(self, writer):
-        """添加文本报告摘要"""
+        """添加报告摘要"""
         logger.info("  📝 添加报告摘要...")
         
-        # 读取文本报告
+        # 读取 Markdown 报告，必要时兼容历史 TXT 报告。
         summaries = []
         
         report_files = [
-            ('职业类别薪资分析报告.txt', '职业薪资分析'),
-            ('学历需求分布分析报告.txt', '学历需求分布'),
-            ('行业景气度分析报告.txt', '行业景气度'),
-            ('时间趋势分析报告.txt', '时间趋势'),
-            ('薪资分析报告.txt', '基础薪资分析')
+            ('职业类别薪资分析报告.md', '职业薪资分析'),
+            ('学历需求分布分析报告.md', '学历需求分布'),
+            ('行业景气度分析报告.md', '行业景气度'),
         ]
         
         for filename, title in report_files:
-            report_file = self.reports_dir / filename
-            if report_file.exists():
+            report_file = self._resolve_report_file(filename)
+            if report_file is not None:
                 try:
                     with open(report_file, 'r', encoding='utf-8') as f:
                         content = f.read()

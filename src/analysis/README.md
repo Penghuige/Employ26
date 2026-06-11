@@ -7,9 +7,29 @@
 
 ## 当前推荐入口
 
+优先使用统一 CLI：
+
+```bash
+python -m src.analysis.cli structured --with-integration --with-excel
+python -m src.analysis.cli requirements
+```
+
 ### 1. 结构化统计主链路
 
-推荐顺序：
+推荐命令：
+
+```bash
+python -m src.analysis.cli structured
+```
+
+常用选项：
+
+- `--with-integration`：先运行 [`occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py)，生成或刷新 `output/integrated`
+- `--sample`：与 `--with-integration` 搭配，使用样本数据
+- `--with-excel`：最后运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)
+- `--skip-standardized`：跳过 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)
+
+单脚本调试顺序：
 
 1. 先运行 [`occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py)
 2. 再运行 [`occupation_salary_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/occupation_salary_analysis.py)
@@ -20,7 +40,13 @@
 
 ### 2. requirement text 统计链路
 
-脚本：
+推荐命令：
+
+```bash
+python -m src.analysis.cli requirements
+```
+
+单脚本调试入口：
 
 - [`requirement_text_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/requirement_text_analysis.py)
 
@@ -66,7 +92,7 @@
 - `constraint_by_city_industry.csv`
 - `template_noise_report.csv`
 - `requirement_stringency_index.csv`
-- `report.txt`
+- `report.md`
 
 命令示例：
 
@@ -75,8 +101,14 @@ python -m src.db.analysis_lexicon --ensure-schema
 python -m src.db.analysis_lexicon --bootstrap-v1 --version v2_curated_requirement_analysis
 python -m src.db.requirement_constraint_facts --ensure-schema
 python -m src.data_pipeline.backfill_recruitment_jobs_normalized
-python -m src.analysis.requirement_text_analysis
+python -m src.analysis.cli requirements
 ```
+
+结构化统计主链路的 Markdown 报告产物：
+
+- `output/reports/职业类别薪资分析报告.md`
+- `output/reports/学历需求分布分析报告.md`
+- `output/reports/行业景气度分析报告.md`
 
 ## 职业词典四表的当前建议
 
