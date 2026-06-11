@@ -272,9 +272,9 @@ _Avoid_: Dumping all outputs into a shared reports root, making run-specific art
 第一阶段导出的 CSV 保留英文列名，而面向人阅读的主报告标题使用中文。这样可以兼顾脚本稳定性与阅读友好性。
 _Avoid_: Chinese column names in machine-facing CSVs, English-only report titles for human output
 
-**CSV-Plus-TXT Deliverables**:
-第一阶段正式产物至少固定输出 CSV 和 TXT 两类文件；HTML 可作为可选增强，但不作为每次都必须生成的硬约束。
-_Avoid_: Requiring HTML for every run, omitting simple machine-readable and human-readable exports
+**CSV-Plus-Markdown Deliverables**:
+第一阶段正式产物至少固定输出 CSV 和 Markdown 两类文件；HTML 可作为可选增强，但不作为每次都必须生成的硬约束。
+_Avoid_: TXT-only human reports, requiring HTML for every run, omitting simple machine-readable and human-readable exports
 
 **Term-Type Counts in Main Output**:
 第一阶段主结果应对 `hard_skill_hint`、`soft_skill_hint`、`certificate_hint`、`tool_hint` 等 `term_type` 分别计数并输出，以便同时观察“热度”和“结构”。
@@ -436,8 +436,8 @@ _Avoid_: Unstable output schemas for overall frequency tables, ad-hoc column sel
 第一阶段分层高频表的正式 CSV 至少包含 `dimension_name`、`dimension_value`、`ngram_level`、`term_text`、`normalized_term`、`record_count`、`record_share`、`term_type`、`category`。
 _Avoid_: Inconsistent subgroup table schemas, mixing dimensions into free-form output columns
 
-**Fixed TXT Report Order**:
-第一阶段 TXT 主报告固定按以下顺序组织章节：`一、运行摘要`、`二、样本覆盖率与回退诊断`、`三、总体高频 unigram`、`四、总体高频 bigram/trigram`、`五、按 term_type/category 的结构分析`、`六、按职业/城市/行业/公司规模分层`、`七、月度趋势`、`八、去重文本 vs 发布记录口径对照`。
+**Fixed Markdown Report Order**:
+第一阶段 Markdown 主报告固定按以下顺序组织章节：`一、运行摘要`、`二、样本覆盖率与回退诊断`、`三、总体高频 unigram`、`四、总体高频 bigram/trigram`、`五、按 term_type/category 的结构分析`、`六、按职业/城市/行业/公司规模分层`、`七、月度趋势`、`八、去重文本 vs 发布记录口径对照`。
 _Avoid_: Ad-hoc report section ordering, moving core diagnostics around between runs
 
 **Hard Skill**:
