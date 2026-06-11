@@ -178,6 +178,7 @@ class TermEntry:
     term_role: str
     is_ascii_like: bool
     normalized_term: str
+    category: str | None = None
 
 
 class HardSkillMatcher:

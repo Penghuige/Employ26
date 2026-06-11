@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from src.skill_extraction.skill_category_mapper import (
     VALID_CATEGORIES,
@@ -273,7 +273,7 @@ class TestApplyCategoriesToDictionary:
     """apply_categories_to_dictionary 函数测试。"""
 
     def test_applies_categories_with_skip_llm(self, tmp_path):
-        """skip_llm=True 时只做规则映射，未映射的设为 None。"""
+        """skip_llm=True 时做规则映射 + 启发式分类，仍未命中的设为 None。"""
         dict_file = tmp_path / "test_dict.json"
         dict_file.write_text(
             json.dumps(SAMPLE_DICT_DATA, ensure_ascii=False), encoding="utf-8"
@@ -289,7 +289,8 @@ class TestApplyCategoriesToDictionary:
         assert skills["Python"]["category"] == "programming_language"
         assert skills["Git"]["category"] == "tool"
         assert skills["示波器"]["category"] == "equipment"
-        assert skills["数据建模"]["category"] is None
+        # 数据建模 通过启发式规则匹配到 process（关键词"建模"命中设计/分析模式）
+        assert skills["数据建模"]["category"] == "process"
 
     def test_applies_categories_with_llm_mock(self, tmp_path):
         """LLM 分类流程通过 mock 验证。"""
@@ -385,3 +386,137 @@ class TestValidCategories:
         for cat in VALID_CATEGORIES:
             assert cat.islower(), f"类别 '{cat}' 不是全小写"
             assert " " not in cat, f"类别 '{cat}' 包含空格"
+
+
+# ─── FlatHardSkillMatcher category 输出测试 ─────────────────────────
+
+
+# 用于构建 FlatHardSkillMatcher 的测试词典
+MATCHER_TEST_DICT = {
+    "metadata": {"skill_count": 5},
+    "skills": [
+        {
+            "name": "Python",
+            "aliases": ["python3"],
+            "skill_type": "编程语言",
+            "category": "programming_language",
+        },
+        {
+            "name": "MySQL",
+            "aliases": ["mysql数据库"],
+            "skill_type": "数据库",
+            "category": "database",
+        },
+        {
+            "name": "Git",
+            "aliases": [],
+            "skill_type": "tool",
+            "category": "tool",
+        },
+        {
+            "name": "数据建模",
+            "aliases": [],
+            "skill_type": "专业知识",
+            "category": None,
+        },
+        {
+            "name": "PMP",
+            "aliases": ["项目管理专业人士"],
+            "skill_type": "证书/资质",
+            "category": "certification",
+        },
+    ],
+}
+
+
+class TestFlatHardSkillMatcherCategory:
+    """FlatHardSkillMatcher 输出包含 category 字段的测试。"""
+
+    def _make_matcher(self):
+        """创建测试用匹配器实例。"""
+        from src.skill_extraction.match_flat_skills_to_duckdb import (
+            FlatHardSkillMatcher,
+        )
+
+        return FlatHardSkillMatcher(MATCHER_TEST_DICT)
+
+    def test_match_candidates_contains_category(self):
+        """match_candidates 返回结果包含 category 字段。"""
+        matcher = self._make_matcher()
+        candidates = matcher.match_candidates("熟练掌握 Python 和 MySQL")
+        assert len(candidates) >= 2
+        for candidate in candidates:
+            assert "category" in candidate
+
+    def test_match_candidates_category_values_correct(self):
+        """match_candidates 返回的 category 值与词典一致。"""
+        matcher = self._make_matcher()
+        candidates = matcher.match_candidates("需要会 Python 和 MySQL")
+        by_name = {c["skill_name"]: c for c in candidates}
+        assert by_name["Python"]["category"] == "programming_language"
+        assert by_name["MySQL"]["category"] == "database"
+
+    def test_match_candidates_none_category(self):
+        """词典中 category 为 None 的技能，输出中 category 也为 None。"""
+        matcher = self._make_matcher()
+        candidates = matcher.match_candidates("需要数据建模能力")
+        by_name = {c["skill_name"]: c for c in candidates}
+        if "数据建模" in by_name:
+            assert by_name["数据建模"]["category"] is None
+
+    def test_match_text_returns_list_of_dicts(self):
+        """match_text 返回字典列表，而非字符串列表。"""
+        matcher = self._make_matcher()
+        results = matcher.match_text("需要掌握 Python 和 Git")
+        assert isinstance(results, list)
+        assert len(results) > 0
+        for item in results:
+            assert isinstance(item, dict)
+            assert "skill_name" in item
+            assert "category" in item
+
+    def test_match_text_category_values(self):
+        """match_text 返回的 category 值正确。"""
+        matcher = self._make_matcher()
+        results = matcher.match_text("需要掌握 Python 和 Git")
+        by_name = {r["skill_name"]: r for r in results}
+        assert by_name["Python"]["category"] == "programming_language"
+        assert by_name["Git"]["category"] == "tool"
+
+    def test_match_text_empty_input(self):
+        """空文本返回空列表。"""
+        matcher = self._make_matcher()
+        results = matcher.match_text("")
+        assert results == []
+
+    def test_match_text_no_match(self):
+        """无匹配时返回空列表。"""
+        matcher = self._make_matcher()
+        results = matcher.match_text("需要吃苦耐劳的精神")
+        assert results == []
+
+    def test_match_text_alias_category_matches_parent(self):
+        """通过 alias 命中时，category 来自父技能。"""
+        matcher = self._make_matcher()
+        results = matcher.match_text("需要会 python3 编程")
+        by_name = {r["skill_name"]: r for r in results}
+        # python3 是 Python 的 alias，category 应为 programming_language
+        if "Python" in by_name:
+            assert by_name["Python"]["category"] == "programming_language"
+
+    def test_match_text_certification_category(self):
+        """证书类技能的 category 正确。"""
+        matcher = self._make_matcher()
+        results = matcher.match_text("持有 PMP 证书")
+        by_name = {r["skill_name"]: r for r in results}
+        if "PMP" in by_name:
+            assert by_name["PMP"]["category"] == "certification"
+
+    def test_match_candidates_always_has_category_key(self):
+        """所有候选结果都包含 category 键（即使值为 None）。"""
+        matcher = self._make_matcher()
+        candidates = matcher.match_candidates("Python MySQL Git 数据建模 PMP")
+        for candidate in candidates:
+            assert "category" in candidate, (
+                f"候选 {candidate['skill_name']} 缺少 category 键"
+            )

@@ -175,7 +175,7 @@
     "食品保鲜": "needs_llm"
   },
   "llm_classification_prompt": {
-    "system_prompt": "你是一个技能分类专家。给定一个技能名称，你需要判断它属于以下 8 个类别中的哪一个。\n\n类别定义：\n1. programming_language - 编程语言及其方言，包括脚本语言和标记语言（如 Python、Java、SQL、HTML）\n2. framework - 软件开发框架、运行时和库（如 Spring Boot、React、PyTorch、Qt）\n3. database - 数据库系统、数据存储和数据仓库技术（如 MySQL、Redis、MongoDB）\n4. tool - 开发工具、设计软件、财务软件、测试工具等专业软件（如 Git、Docker、Photoshop、AutoCAD）\n5. office - 通用办公软件和文档处理工具（如 Microsoft Office、WPS）\n6. equipment - 硬件设备、仪器仪表、生产设备、检测设备等物理设备（如 示波器、PLC、CNC）\n7. process - 制造工艺、实验方法、分析技术、加工流程等技术方法（如 焊接工艺、PCR、有限元分析）\n8. certification - 职业资格证书、行业认证、专业资质（如 PMP、CPA、一级建造师）\n\n严格只返回 JSON 对象，格式为 {\"category\": \"类别英文标识\"}，不要返回其他内容。",
+    "system_prompt": "你是一个技能分类专家。给定一个或多个技能名称，你需要判断每个技能属于以下 8 个类别中的哪一个。\n\n类别定义：\n1. programming_language - 编程语言及其方言，包括脚本语言和标记语言（如 Python、Java、SQL、HTML）\n2. framework - 软件开发框架、运行时和库（如 Spring Boot、React、PyTorch、Qt）\n3. database - 数据库系统、数据存储和数据仓库技术（如 MySQL、Redis、MongoDB）\n4. tool - 开发工具、设计软件、财务软件、测试工具等专业软件（如 Git、Docker、Photoshop、AutoCAD）\n5. office - 通用办公软件和文档处理工具（如 Microsoft Office、WPS）\n6. equipment - 硬件设备、仪器仪表、生产设备、检测设备等物理设备（如 示波器、PLC、CNC）\n7. process - 制造工艺、实验方法、分析技术、加工流程等技术方法（如 焊接工艺、PCR、有限元分析）\n8. certification - 职业资格证书、行业认证、专业资质（如 PMP、CPA、一级建造师）",
     "user_prompt_template": "请对以下技能进行分类：\n\n技能名称：{skill_name}\n\n上下文信息（如果有）：{context}"
   }
 }

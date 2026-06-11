@@ -169,9 +169,9 @@ def evaluate_regression_dataset(
     for row in dataset:
         predicted = matcher.match_text(row.text)
         predicted_keys = {
-            _normalize_skill_name(item, skill_name_normalizer): skill_name_normalizer.get(
-                _safe_text(item).casefold(),
-                item,
+            _normalize_skill_name(item["skill_name"], skill_name_normalizer): skill_name_normalizer.get(
+                _safe_text(item["skill_name"]).casefold(),
+                item["skill_name"],
             )
             for item in predicted
         }
