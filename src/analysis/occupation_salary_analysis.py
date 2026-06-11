@@ -2,13 +2,12 @@
 职业/职业类别薪资分析模块。
 
 用途:
-- 基于 `output/integrated/*_整合_*.csv` 分析职业类别与职业核心词的薪资分布。
+- 基于 PostgreSQL `public.recruitment_jobs_normalized` + 职业匹配结果层分析职业薪资分布。
 - 同时生成月度趋势、学历交叉统计、Markdown 报告、CSV 明细和 HTML 图表。
 - 这是当前目录里最核心的薪资分析脚本，优先级高于旧版 `salary_analysis.py`。
 
 前置依赖:
-- 先运行 `src/preprocessing/integrate_occupation.py`，确保整合数据里已经补齐
-  `occupation_core`、`occupation_category`、`publish_month`、`薪资水平` 等字段。
+- 先完成统一招聘规范层回填，并生成 `public.skill_extraction_requirement_matches` 职业匹配结果。
 
 关键输入字段:
 - `薪资水平`
@@ -29,7 +28,7 @@
 - `python -m src.analysis.occupation_salary_analysis`
 
 维护说明:
-- 当前脚本使用的是新版整合数据口径，和目录中的 `generate_standardized_tables.py`
+- 当前脚本使用 PostgreSQL 结构化统计主输入，和目录中的 `generate_standardized_tables.py`
   `generate_excel_summary.py` 存在上下游关系，不属于重复实现。
 """
 
@@ -40,7 +39,8 @@ import re
 
 from pathlib import Path
 
-from src.analysis.structured_common import load_integrated_data, write_csv_with_legacy_copy
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -92,22 +92,18 @@ class OccupationSalaryAnalyzer:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = Path(output_dir) if output_dir is not None else base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("职业类别薪资分析器初始化完成")
     
     def load_data(self):
-        """加载整合后的数据"""
-        logger.info("加载数据...")
-        
-        df, input_files = load_integrated_data(
-            self.data_dir,
-            required_columns={'薪资水平', 'occupation_core', 'occupation_category', 'publish_month', '学历要求'},
-        )
-        for filename in input_files:
-            logger.info(f"  读取: {filename}")
+        """加载 PostgreSQL 结构化统计主输入。"""
+        logger.info("从 PostgreSQL 加载结构化统计主输入...")
+
+        df = load_structured_analysis_dataframe()
         logger.info(f"总数据: {len(df):,} 行")
         
         # 解析薪资

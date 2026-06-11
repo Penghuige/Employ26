@@ -4,13 +4,12 @@
 生成规范化汇总表。
 
 用途:
-- 将 `output/reports` 中已有的分析产物重新整理为更稳定、列名更统一的交付表。
+- 将结构化统计批次目录中已有的分析产物重新整理为更稳定、列名更统一的交付表。
 - 同时补一张 `学历月度趋势.csv`，方便后续 Excel 汇总或外部消费。
 
 前置依赖:
 - `职业学历薪资`、`职业月度薪资` 两张表依赖 `occupation_salary_analysis.py` 先生成源 CSV。
-- `学历月度趋势` 直接读取 `output/integrated/*_整合_*.csv`，因此也依赖
-  `src/preprocessing/integrate_occupation.py` 先完成数据整合。
+- `学历月度趋势` 和职业类别映射直接读取 PostgreSQL 结构化统计主输入。
 
 主要输出:
 - `output/reports/structured_analysis_{mm-dd}/standardized_salary_by_education_occupation.csv`
@@ -31,7 +30,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.analysis.structured_common import write_csv_with_legacy_copy
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -83,7 +83,9 @@ class StandardizedTableGenerator:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.reports_dir = Path(output_dir) if output_dir is not None else base_dir / 'output' / 'reports'
+        self.reports_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("规范化汇总表生成器初始化完成")
@@ -263,22 +265,12 @@ class StandardizedTableGenerator:
         logger.info("\n生成汇总表：学历月度趋势")
         logger.info("=" * 60)
         
-        # 从整合数据中读取原始数据
-        integrated_dir = self.base_dir / 'output' / 'integrated'
-        
-        all_data = []
-        for csv_file in integrated_dir.glob('*_整合_*.csv'):
-            # 读取所有数据
-            df = pd.read_csv(csv_file, encoding='utf-8')
-            # 选择需要的列
-            df = df[['学历要求', 'publish_month', '薪资水平']].copy()
-            all_data.append(df)
-        
-        if not all_data:
-            logger.error("  错误：未找到整合数据文件")
+        df = load_structured_analysis_dataframe()[['学历要求', 'publish_month', '薪资水平']].copy()
+
+        if df.empty:
+            logger.error("  错误：PostgreSQL 结构化统计主输入为空")
             return None
-        
-        df = pd.concat(all_data, ignore_index=True)
+
         logger.info(f"  读取原始数据: {len(df):,} 行")
         
         # 解析薪资
@@ -364,23 +356,19 @@ class StandardizedTableGenerator:
     def _load_occupation_category_mapping(self):
         """加载职业到职业类别的映射
         
-        从整合数据中提取映射关系
+        从 PostgreSQL 结构化统计主输入中提取映射关系
         """
-        integrated_dir = self.base_dir / 'output' / 'integrated'
-        
         mapping = {}
-        
-        # 读取所有整合数据文件
-        for csv_file in integrated_dir.glob('*_整合_*.csv'):
-            df = pd.read_csv(csv_file, encoding='utf-8', usecols=['occupation_core', 'occupation_category'])
-            df = df[df['occupation_core'].notna() & df['occupation_category'].notna()]
-            
-            # 构建映射（一个职业对应一个类别）
-            for _, row in df.iterrows():
-                occupation = row['occupation_core']
-                category = row['occupation_category']
-                if occupation not in mapping:
-                    mapping[occupation] = category
+
+        df = load_structured_analysis_dataframe()[['occupation_core', 'occupation_category']].copy()
+        df = df[df['occupation_core'].notna() & df['occupation_category'].notna()]
+
+        # 构建映射（一个职业对应一个类别）
+        for _, row in df.iterrows():
+            occupation = row['occupation_core']
+            category = row['occupation_category']
+            if occupation not in mapping:
+                mapping[occupation] = category
         
         logger.info(f"  加载职业类别映射: {len(mapping)} 个职业")
         

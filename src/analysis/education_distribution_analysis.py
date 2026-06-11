@@ -4,12 +4,11 @@
 学历需求分布分析模块。
 
 用途:
-- 基于 `output/integrated/*_整合_*.csv` 统计职业类别/职业在年度、月度两个时间尺度上的学历分布。
+- 基于 PostgreSQL `public.recruitment_jobs_normalized` + 职业匹配结果层统计学历分布。
 - 适合和 `occupation_salary_analysis.py`、`industry_trend_analysis.py` 搭配，作为当前目录中的主分析链路之一。
 
 前置依赖:
-- 先运行 `src/preprocessing/integrate_occupation.py`，确保整合数据里已经有
-  `occupation_core`、`occupation_category`、`publish_month` 等标准化字段。
+- 先完成统一招聘规范层回填，并生成 `public.skill_extraction_requirement_matches` 职业匹配结果。
 
 关键输入字段:
 - `学历要求`
@@ -28,7 +27,7 @@
 - `python -m src.analysis.education_distribution_analysis`
 
 维护说明:
-- 当前脚本使用的是较新的 `output/integrated` 数据口径，不属于旧版关键词分析脚本。
+- 当前脚本使用 PostgreSQL 结构化统计主输入，不属于旧版关键词分析脚本。
 """
 
 import logging
@@ -36,7 +35,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.analysis.structured_common import load_integrated_data, write_csv_with_legacy_copy
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -59,8 +59,9 @@ class EducationDistributionAnalyzer:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = Path(output_dir) if output_dir is not None else base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.min_jobs_monthly = min_jobs_monthly
@@ -108,15 +109,10 @@ class EducationDistributionAnalyzer:
         return str(month_str)[:4]
     
     def load_data(self):
-        """加载整合后的数据"""
-        logger.info("加载数据...")
-        
-        df, input_files = load_integrated_data(
-            self.data_dir,
-            required_columns={'学历要求', 'publish_month', 'occupation_core', 'occupation_category'},
-        )
-        for filename in input_files:
-            logger.info(f"  读取: {filename}")
+        """加载 PostgreSQL 结构化统计主输入。"""
+        logger.info("从 PostgreSQL 加载结构化统计主输入...")
+
+        df = load_structured_analysis_dataframe()
         logger.info(f"总数据: {len(df):,} 行")
         
         # 标准化学历

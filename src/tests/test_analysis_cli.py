@@ -6,7 +6,6 @@ def test_build_parser_accepts_structured_defaults():
 
     assert args.command == "structured"
     assert args.structured_command is None
-    assert args.with_integration is False
     assert args.with_excel is False
     assert args.skip_standardized is False
 
@@ -16,29 +15,24 @@ def test_build_parser_accepts_structured_run_defaults():
 
     assert args.command == "structured"
     assert args.structured_command == "run"
-    assert args.with_integration is False
 
 
 def test_build_parser_accepts_structured_options():
     args = cli.build_parser().parse_args(
-        ["structured", "--with-integration", "--sample", "--with-excel"]
+        ["structured", "--with-excel"]
     )
 
     assert args.command == "structured"
-    assert args.with_integration is True
-    assert args.sample is True
     assert args.with_excel is True
 
 
 def test_build_parser_accepts_structured_run_options():
     args = cli.build_parser().parse_args(
-        ["structured", "run", "--with-integration", "--sample", "--with-excel"]
+        ["structured", "run", "--with-excel"]
     )
 
     assert args.command == "structured"
     assert args.structured_command == "run"
-    assert args.with_integration is True
-    assert args.sample is True
     assert args.with_excel is True
 
 

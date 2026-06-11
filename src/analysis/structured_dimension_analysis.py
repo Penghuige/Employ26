@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.analysis.structured_common import load_integrated_data, resolve_structured_paths, write_csv_with_legacy_copy
+from src.analysis.structured_common import resolve_structured_paths, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 
 logger = logging.getLogger(__name__)
@@ -37,18 +38,17 @@ class StructuredDimensionAnalyzer:
         """
         paths = resolve_structured_paths(base_dir=base_dir, output_dir=output_dir)
         self.base_dir = paths.project_root
-        self.data_dir = paths.integrated_dir
         self.output_dir = paths.output_dir
         self.min_group_size = min_group_size
 
     def load_data(self) -> tuple[pd.DataFrame, list[str]]:
         """加载并补充结构化维度字段。"""
-        df, input_files = load_integrated_data(self.data_dir, required_columns=REQUIRED_COLUMNS)
+        df = load_structured_analysis_dataframe()
         df = df.copy()
         df["experience_level"] = df["经验要求"].apply(normalize_experience)
         df["company_size_level"] = df["公司规模"].apply(normalize_company_size)
         df["city_normalized"] = df["工作城市"].apply(normalize_city)
-        return df, input_files
+        return df, ["postgres:public.recruitment_jobs_normalized", "postgres:public.skill_extraction_requirement_matches"]
 
     def analyze_experience_by_occupation(self, df: pd.DataFrame) -> pd.DataFrame:
         """统计职业维度经验要求分布。"""

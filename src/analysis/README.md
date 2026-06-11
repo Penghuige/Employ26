@@ -2,7 +2,7 @@
 
 当前 `src/analysis` 分成两条链路：
 
-- 结构化统计主链路：继续围绕 `output/integrated` 与 `output/reports` 产出常规统计报表。
+- 结构化统计主链路：直接读取 PostgreSQL `public.recruitment_jobs_normalized` 和 `public.skill_extraction_requirement_matches`，再导出常规统计报表。
 - requirement text 第二阶段链路：直接读取 PostgreSQL `public.recruitment_jobs_normalized` 和 `public.job_description_parsed`，将 requirement text 抽取成可复用的约束事实层，再导出正式统计产物。
 
 ## 当前推荐入口
@@ -10,7 +10,7 @@
 优先使用统一 CLI：
 
 ```bash
-python -m src.analysis.cli structured run --with-integration --with-excel
+python -m src.analysis.cli structured run --with-excel
 python -m src.analysis.cli requirements run
 ```
 
@@ -24,20 +24,24 @@ python -m src.analysis.cli structured run
 
 常用选项：
 
-- `--with-integration`：先运行 [`occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py)，生成或刷新 `output/integrated`
-- `--sample`：与 `--with-integration` 搭配，使用样本数据
 - `--with-excel`：最后运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)
 - `--skip-standardized`：跳过 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)
 - `--output-dir`：显式指定结构化统计批次输出目录
 
+主输入：
+
+- `public.recruitment_jobs_normalized`：招聘记录统一规范层
+- `public.skill_extraction_requirement_matches`：职业匹配结果层，按 `recruitment_record_id` 回连招聘记录
+
 单脚本调试顺序：
 
-1. 先运行 [`occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py)
-2. 再运行 [`occupation_salary_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/occupation_salary_analysis.py)
-3. 再运行 [`education_distribution_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/education_distribution_analysis.py)
-4. 再运行 [`industry_trend_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/industry_trend_analysis.py)
-5. 如需交付层汇总，再运行 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)
-6. 如需最终汇总 Excel，再运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)
+1. 先确保 [`backfill_recruitment_jobs_normalized.py`](/d:/PythonProjects/Employ26/src/data_pipeline/backfill_recruitment_jobs_normalized.py) 已回填统一规范层
+2. 再确保 [`requirement_match_prep.py`](/d:/PythonProjects/Employ26/src/data_pipeline/requirement_match_prep.py) 已写入职业匹配结果层
+3. 再运行 [`occupation_salary_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/occupation_salary_analysis.py)
+4. 再运行 [`education_distribution_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/education_distribution_analysis.py)
+5. 再运行 [`industry_trend_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/industry_trend_analysis.py)
+6. 如需交付层汇总，再运行 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)
+7. 如需最终汇总 Excel，再运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)
 
 ### 2. requirement text 统计链路
 
@@ -81,7 +85,8 @@ python -m src.analysis.cli requirements run
 
 默认输出目录：
 
-- `output/reports/req_analysis_{mm-dd}/`
+- 结构化统计：`output/reports/structured_analysis_{mm-dd}/`
+- requirement text：`output/reports/req_analysis_{mm-dd}/`
 
 固定产物：
 
@@ -107,14 +112,10 @@ python -m src.analysis.cli requirements run
 
 结构化统计主链路的 Markdown 报告产物：
 
-- `output/reports/职业类别薪资分析报告.md`
-- `output/reports/学历需求分布分析报告.md`
-- `output/reports/行业景气度分析报告.md`
-- `output/reports/结构化维度补充分析报告.md`
-
-结构化统计主链路默认批次目录：
-
-- `output/reports/structured_analysis_{mm-dd}/`
+- `output/reports/structured_analysis_{mm-dd}/职业类别薪资分析报告.md`
+- `output/reports/structured_analysis_{mm-dd}/学历需求分布分析报告.md`
+- `output/reports/structured_analysis_{mm-dd}/行业景气度分析报告.md`
+- `output/reports/structured_analysis_{mm-dd}/结构化维度补充分析报告.md`
 
 新增规范 CSV 产物示例：
 
@@ -141,3 +142,7 @@ python -m src.analysis.cli requirements run
 - 职业匹配、检索、预处理默认读 `public.occ_dict_unified`
 - 如需兼容旧脚本，可继续读 `public.occ_dict_detailed` / `public.occ_dict_pro`
 - 分类骨架回查可读 `public.occ_dict_class`
+
+## 历史 CSV 适配器说明
+
+[`occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py) 只保留为历史兼容适配器，用于读取旧的职业解析 CSV 并生成 `output/integrated`。当前结构化统计主链路不再依赖它；如需新增统计字段，应优先补到 PostgreSQL 规范层或职业匹配/事实结果层，再由 [`structured_pg_source.py`](/d:/PythonProjects/Employ26/src/analysis/structured_pg_source.py) 暴露给分析脚本。

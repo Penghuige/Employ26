@@ -23,7 +23,6 @@ from src.analysis.requirement_text_analysis import (
 )
 from src.analysis.structured_common import build_structured_output_dir, write_run_manifest
 from src.analysis.structured_dimension_analysis import StructuredDimensionAnalyzer
-from src.data_pipeline.occupation_integration import DataIntegrator
 
 
 logger = logging.getLogger(__name__)
@@ -41,13 +40,6 @@ def run_structured(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir) if args.output_dir else build_structured_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     completed_steps: list[str] = []
-
-    if bool(args.with_integration):
-        _run_step(
-            "occupation_integration",
-            lambda: DataIntegrator(base_dir=base_dir, use_full_data=not bool(args.sample)).integrate_all(),
-        )
-        completed_steps.append("occupation_integration")
 
     _run_step("occupation_salary_analysis", lambda: OccupationSalaryAnalyzer(base_dir=base_dir, output_dir=output_dir).run())
     completed_steps.append("occupation_salary_analysis")
@@ -83,15 +75,16 @@ def run_structured(args: argparse.Namespace) -> None:
         workflow="structured_analysis",
         steps=completed_steps,
         params={
-            "with_integration": bool(args.with_integration),
-            "sample": bool(args.sample),
             "with_excel": bool(args.with_excel),
             "skip_standardized": bool(args.skip_standardized),
+            "source": "postgres",
+            "normalized_table": "public.recruitment_jobs_normalized",
+            "occupation_match_table": "public.skill_extraction_requirement_matches",
         },
-        input_files=sorted(
-            path.name
-            for path in ((base_dir or Path.cwd()) / "output" / "integrated").glob("*_整合_*.csv")
-        ),
+        input_files=[
+            "postgres:public.recruitment_jobs_normalized",
+            "postgres:public.skill_extraction_requirement_matches",
+        ],
         output_files=sorted(path.name for path in output_dir.iterdir() if path.is_file()),
     )
 
@@ -136,16 +129,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _add_structured_args(parser: argparse.ArgumentParser) -> None:
     """为结构化统计命令添加公共参数。"""
-    parser.add_argument(
-        "--with-integration",
-        action="store_true",
-        help="运行统计前先刷新 occupation integration",
-    )
-    parser.add_argument(
-        "--sample",
-        action="store_true",
-        help="与 --with-integration 搭配，使用样本数据",
-    )
     parser.add_argument(
         "--with-excel",
         action="store_true",

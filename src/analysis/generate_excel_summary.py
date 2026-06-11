@@ -40,6 +40,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+from src.analysis.structured_common import build_structured_output_dir
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -55,7 +57,9 @@ class ExcelReportGenerator:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.reports_dir = Path(output_dir) if output_dir is not None else base_dir / 'output' / 'reports'
+        self.reports_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         self.output_file = self.reports_dir / '广东省招聘数据分析汇总报告.xlsx'
         

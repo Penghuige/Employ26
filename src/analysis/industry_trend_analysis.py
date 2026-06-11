@@ -2,12 +2,11 @@
 行业景气度分析模块。
 
 用途:
-- 基于 `output/integrated/*_整合_*.csv` 统计城市 × 行业 × 月度的招聘量变化。
+- 基于 PostgreSQL `public.recruitment_jobs_normalized` 统计城市 × 行业 × 月度招聘量变化。
 - 输出 Markdown 报告、CSV 明细和 HTML 图表，用于观察行业热度与城市行业结构。
 
 前置依赖:
-- 先运行 `src/preprocessing/integrate_occupation.py`，确保整合数据中存在
-  `publish_month`、`city_clean`、`industry_clean` 等标准化字段。
+- 先完成统一招聘规范层回填；城市、行业和月份字段由结构化统计数据源统一标准化。
 
 关键输入字段:
 - `publish_month`
@@ -24,7 +23,7 @@
 - `python -m src.analysis.industry_trend_analysis`
 
 维护说明:
-- 当前脚本属于新版分析链路，和 `preprocessing/integrate_occupation.py` 的标准化行业字段直接配套。
+- 当前脚本属于新版分析链路，城市和行业标准化字段由 PostgreSQL 结构化统计数据源统一补齐。
 """
 
 import logging
@@ -32,7 +31,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.analysis.structured_common import load_integrated_data, write_csv_with_legacy_copy
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -49,22 +49,18 @@ class IndustryTrendAnalyzer:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = Path(output_dir) if output_dir is not None else base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("行业景气度分析器初始化完成")
     
     def load_data(self):
-        """加载整合后的数据"""
-        logger.info("加载数据...")
-        
-        df, input_files = load_integrated_data(
-            self.data_dir,
-            required_columns={'publish_month', 'city_clean', 'industry_clean'},
-        )
-        for filename in input_files:
-            logger.info(f"  读取: {filename}")
+        """加载 PostgreSQL 结构化统计主输入。"""
+        logger.info("从 PostgreSQL 加载结构化统计主输入...")
+
+        df = load_structured_analysis_dataframe()
         logger.info(f"总数据: {len(df):,} 行")
         
         # 过滤有效数据

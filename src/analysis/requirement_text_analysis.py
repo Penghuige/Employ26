@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import text
 
+from config.paths import get_project_paths
 from src.analysis.requirement_constraint_extraction import (
     DEFAULT_EXTRACTOR_VERSION,
     convert_constraints_to_fact_rows,
@@ -186,7 +187,7 @@ def parse_publish_month(value: object) -> str:
 def build_current_output_dir(run_date: datetime | None = None) -> Path:
     """构建 req_analysis 输出目录。"""
     current = run_date or datetime.now()
-    return Path("output") / "reports" / f"req_analysis_{current.strftime(RUN_DATE_FORMAT)}"
+    return get_project_paths().output_dir / "reports" / f"req_analysis_{current.strftime(RUN_DATE_FORMAT)}"
 
 
 def _empty_frame(columns: list[str]) -> pd.DataFrame:
@@ -741,7 +742,37 @@ def analyze_requirement_texts(
     lexicon_summary_df = _reshape_lexicon_summary_frames(build_lexicon_summary_frames(resources))
 
     manifest = {
+        "workflow": "requirement_text_analysis",
         "run_timestamp": datetime.now().isoformat(),
+        "steps": [
+            "load_requirement_analysis_dataframe",
+            "extract_requirement_constraints",
+            "replace_requirement_constraint_facts",
+            "aggregate_requirement_reports",
+        ],
+        "params": {
+            "top_n": int(params.top_n),
+            "min_group_size": int(params.min_group_size),
+            "min_monthly_group_size": int(params.min_monthly_group_size),
+            "extractor_version": params.extractor_version,
+        },
+        "input_files": [
+            "postgres:public.recruitment_jobs_normalized",
+            "postgres:public.job_description_parsed",
+            "postgres:analysis_lexicon.current_release",
+        ],
+        "output_files": [
+            "run_manifest.json",
+            "coverage_diagnostics.csv",
+            "lexicon_summary.csv",
+            "constraint_dimension_frequency.csv",
+            "constraint_value_distribution.csv",
+            "constraint_by_city_industry.csv",
+            "template_noise_report.csv",
+            "requirement_stringency_index.csv",
+            "report.md",
+            "postgres:public.requirement_constraint_facts",
+        ],
         "extractor_version": params.extractor_version,
         "lexicon_version": resources["release"]["version"],
         "total_normalized_records": int(total_records),
