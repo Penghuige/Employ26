@@ -2,21 +2,33 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import text
 
-from src.db.postgres import create_pg_engine
+from src.db.postgres import create_pg_engine, get_table_columns
 from src.db.recruitment_jobs_normalized import (
     DEFAULT_NORMALIZED_TABLE,
     quote_table_name,
+    split_table_name,
 )
 from src.skill_extraction.config import load_skill_extraction_config
 
 
 DEFAULT_MATCH_TABLE = "public.skill_extraction_requirement_matches"
+
+SOURCE_TABLE_ALIASES = {
+    "recruit.main.gd_recruit_qcwy_sample": '"51job".sample',
+    "recruit.main.gd_recruit_liepin_sample": '"Liepin".sample',
+    "recruit.main.zhilian_guangdong_sample": '"Zhilian".sample',
+    "recruit.main.gd_recruit_qcwy_cleaned": '"51job".cleaned_data',
+    "recruit.main.gd_recruit_liepin_cleaned": '"Liepin".cleaned_data',
+    "recruit.main.zhilian_guangdong_cleaned": '"Zhilian".cleaned_data',
+}
 
 STRUCTURED_SOURCE_COLUMNS = [
     "recruitment_record_id",
@@ -66,16 +78,55 @@ def load_default_structured_source_config() -> StructuredSourceConfig:
     )
 
 
-def build_structured_source_query(config: StructuredSourceConfig) -> str:
+def build_structured_source_query(
+    config: StructuredSourceConfig,
+    *,
+    match_columns: set[str] | None = None,
+) -> str:
     """构建结构化统计主输入查询。"""
     normalized_table = quote_table_name(config.normalized_table)
     match_table = quote_table_name(config.occupation_match_table)
+    available_match_columns = match_columns or set()
+    has_record_id = "recruitment_record_id" in available_match_columns
+    has_source_locator = {"__source_table", "__source_row_number"}.issubset(available_match_columns)
+    if not has_record_id and not has_source_locator:
+        raise ValueError(
+            "职业匹配结果表缺少可用关联键：需要 recruitment_record_id "
+            "或 __source_table + __source_row_number"
+        )
+
+    match_record_id_select = "m.recruitment_record_id" if has_record_id else "NULL::text AS recruitment_record_id"
+    match_source_table_select = (
+        _build_match_source_table_expr() if has_source_locator else "NULL::text AS match_source_table"
+    )
+    match_source_row_number_select = (
+        'm."__source_row_number" AS match_source_row_number'
+        if has_source_locator
+        else "NULL::bigint AS match_source_row_number"
+    )
+    partition_expr = (
+        "m.recruitment_record_id"
+        if has_record_id
+        else 'm."__source_table", m."__source_row_number"'
+    )
+    where_expr = (
+        "COALESCE(m.recruitment_record_id, '') <> ''"
+        if has_record_id
+        else 'COALESCE(m."__source_table", \'\') <> \'\' AND m."__source_row_number" IS NOT NULL'
+    )
+    join_expr = (
+        "m.recruitment_record_id = n.recruitment_record_id"
+        if has_record_id
+        else "m.match_source_table = n.source_table AND m.match_source_row_number = n.source_row_number"
+    )
     return f"""
         WITH latest_occupation_match AS (
             SELECT *
             FROM (
                 SELECT
-                    m.recruitment_record_id,
+                    {match_record_id_select},
+                    {match_source_table_select},
+                    {match_source_row_number_select},
                     m.occupation_code,
                     m.occupation_title,
                     m."大类" AS occupation_major_category,
@@ -85,14 +136,14 @@ def build_structured_source_query(config: StructuredSourceConfig) -> str:
                     m.is_matched AS occupation_is_matched,
                     COALESCE(m.top1_score, 0) AS occupation_confidence,
                     row_number() OVER (
-                        PARTITION BY m.recruitment_record_id
+                        PARTITION BY {partition_expr}
                         ORDER BY
                             CASE WHEN COALESCE(m.is_matched, false) THEN 0 ELSE 1 END,
                             COALESCE(m.top1_score, 0) DESC,
                             COALESCE(m.occupation_code, '') ASC
                     ) AS rn
                 FROM {match_table} m
-                WHERE COALESCE(m.recruitment_record_id, '') <> ''
+                WHERE {where_expr}
             ) ranked
             WHERE rn = 1
         )
@@ -120,7 +171,7 @@ def build_structured_source_query(config: StructuredSourceConfig) -> str:
             m.occupation_is_matched
         FROM {normalized_table} n
         LEFT JOIN latest_occupation_match m
-          ON m.recruitment_record_id = n.recruitment_record_id
+          ON {join_expr}
     """
 
 
@@ -132,14 +183,133 @@ def load_structured_analysis_dataframe(
     engine = create_pg_engine()
     try:
         with engine.connect() as connection:
+            match_schema, match_table = split_table_name(resolved_config.occupation_match_table)
+            match_columns = set(get_table_columns(connection, match_schema, match_table))
             source_df = pd.read_sql_query(
-                text(build_structured_source_query(resolved_config)),
+                text(build_structured_source_query(resolved_config, match_columns=match_columns)),
                 connection,
             )
     finally:
         engine.dispose()
 
     return normalize_structured_source_dataframe(source_df)
+
+
+def build_structured_source_coverage(
+    config: StructuredSourceConfig | None = None,
+) -> dict[str, float | int | str]:
+    """统计结构化主输入覆盖率。"""
+    resolved_config = config or load_default_structured_source_config()
+    engine = create_pg_engine()
+    try:
+        with engine.connect() as connection:
+            match_schema, match_table = split_table_name(resolved_config.occupation_match_table)
+            match_columns = set(get_table_columns(connection, match_schema, match_table))
+            has_record_id = "recruitment_record_id" in match_columns
+            has_source_locator = {"__source_table", "__source_row_number"}.issubset(match_columns)
+            if not has_record_id and not has_source_locator:
+                raise ValueError(
+                    "职业匹配结果表缺少可用关联键：需要 recruitment_record_id "
+                    "或 __source_table + __source_row_number"
+                )
+
+            normalized_table = quote_table_name(resolved_config.normalized_table)
+            match_table_name = quote_table_name(resolved_config.occupation_match_table)
+            if has_record_id:
+                match_keys_cte = f"""
+                    match_keys AS (
+                        SELECT DISTINCT recruitment_record_id
+                        FROM {match_table_name}
+                        WHERE COALESCE(recruitment_record_id, '') <> ''
+                    )
+                """
+                coverage_query = f"""
+                    WITH {match_keys_cte}
+                    SELECT
+                        count(*) AS normalized_rows,
+                        count(*) FILTER (WHERE mk.recruitment_record_id IS NOT NULL) AS matched_rows,
+                        count(*) FILTER (WHERE COALESCE(n.salary_raw, '') <> '') AS salary_nonempty_rows,
+                        count(*) FILTER (WHERE COALESCE(n.education_requirement_raw, '') <> '') AS education_nonempty_rows,
+                        count(*) FILTER (WHERE COALESCE(n.publish_date, '') <> '') AS publish_date_nonempty_rows
+                    FROM {normalized_table} n
+                    LEFT JOIN match_keys mk
+                      ON mk.recruitment_record_id = n.recruitment_record_id
+                """
+            else:
+                coverage_query = f"""
+                    WITH match_keys AS (
+                        SELECT DISTINCT
+                            CASE "__source_table"
+                                {" ".join(f"WHEN {old_name!r} THEN {new_name!r}" for old_name, new_name in SOURCE_TABLE_ALIASES.items())}
+                                ELSE "__source_table"
+                            END AS source_table,
+                            "__source_row_number" AS source_row_number
+                        FROM {match_table_name}
+                        WHERE COALESCE("__source_table", '') <> ''
+                          AND "__source_row_number" IS NOT NULL
+                    )
+                    SELECT
+                        count(*) AS normalized_rows,
+                        count(*) FILTER (WHERE mk.source_table IS NOT NULL) AS matched_rows,
+                        count(*) FILTER (WHERE COALESCE(n.salary_raw, '') <> '') AS salary_nonempty_rows,
+                        count(*) FILTER (WHERE COALESCE(n.education_requirement_raw, '') <> '') AS education_nonempty_rows,
+                        count(*) FILTER (WHERE COALESCE(n.publish_date, '') <> '') AS publish_date_nonempty_rows
+                    FROM {normalized_table} n
+                    LEFT JOIN match_keys mk
+                      ON mk.source_table = n.source_table
+                     AND mk.source_row_number = n.source_row_number
+                """
+            row = connection.execute(text(coverage_query)).mappings().one()
+    finally:
+        engine.dispose()
+
+    normalized_rows = int(row["normalized_rows"] or 0)
+    matched_rows = int(row["matched_rows"] or 0)
+    salary_nonempty_rows = int(row["salary_nonempty_rows"] or 0)
+    education_nonempty_rows = int(row["education_nonempty_rows"] or 0)
+    publish_date_nonempty_rows = int(row["publish_date_nonempty_rows"] or 0)
+    return {
+        "normalized_table": resolved_config.normalized_table,
+        "occupation_match_table": resolved_config.occupation_match_table,
+        "normalized_rows": normalized_rows,
+        "matched_rows": matched_rows,
+        "matched_share": round(matched_rows / normalized_rows, 6) if normalized_rows else 0.0,
+        "salary_nonempty_rows": salary_nonempty_rows,
+        "salary_nonempty_share": round(salary_nonempty_rows / normalized_rows, 6) if normalized_rows else 0.0,
+        "education_nonempty_rows": education_nonempty_rows,
+        "education_nonempty_share": round(education_nonempty_rows / normalized_rows, 6) if normalized_rows else 0.0,
+        "publish_date_nonempty_rows": publish_date_nonempty_rows,
+        "publish_date_nonempty_share": round(publish_date_nonempty_rows / normalized_rows, 6) if normalized_rows else 0.0,
+        "match_join_key": "recruitment_record_id" if has_record_id else "__source_table+__source_row_number(mapped)",
+    }
+
+
+def write_structured_source_coverage(
+    output_dir: Path,
+    config: StructuredSourceConfig | None = None,
+) -> Path:
+    """写入结构化主输入覆盖率摘要。"""
+    coverage = build_structured_source_coverage(config=config)
+    output_path = output_dir / "input_coverage_summary.json"
+    output_path.write_text(
+        json.dumps(coverage, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return output_path
+
+
+def _build_match_source_table_expr() -> str:
+    """把历史匹配结果表里的来源表名映射到 normalized 使用的 PostgreSQL 表名。"""
+    branches = "\n".join(
+        f"                        WHEN {old_name!r} THEN {new_name!r}"
+        for old_name, new_name in SOURCE_TABLE_ALIASES.items()
+    )
+    return f"""
+                    CASE m."__source_table"
+{branches}
+                        ELSE m."__source_table"
+                    END AS match_source_table
+    """.strip()
 
 
 def normalize_structured_source_dataframe(source_df: pd.DataFrame) -> pd.DataFrame:

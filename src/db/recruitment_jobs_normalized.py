@@ -13,6 +13,8 @@ from src.db.postgres import create_pg_engine, ensure_schema
 
 
 DEFAULT_NORMALIZED_TABLE = "public.recruitment_jobs_normalized"
+DEFAULT_BACKFILL_LOCATOR_TABLE = "public.recruitment_jobs_normalized_backfill_locator"
+DEFAULT_BACKFILL_CHUNK_STATE_TABLE = "public.recruitment_jobs_normalized_backfill_chunks"
 
 
 def split_table_name(table_name: str) -> tuple[str, str]:
@@ -154,6 +156,79 @@ def ensure_recruitment_jobs_normalized_table(
             f"""
             CREATE INDEX IF NOT EXISTS idx_{object_prefix}_dedupe_fingerprint
             ON {qualified_table} (dedupe_fingerprint)
+            """
+        )
+    )
+
+
+def ensure_recruitment_jobs_normalized_backfill_runtime_tables(
+    connection,
+    *,
+    locator_table: str = DEFAULT_BACKFILL_LOCATOR_TABLE,
+    chunk_state_table: str = DEFAULT_BACKFILL_CHUNK_STATE_TABLE,
+) -> None:
+    """确保回填运行期 locator 与 chunk 状态表存在。"""
+    for table_name in (locator_table, chunk_state_table):
+        schema_name, _ = split_table_name(table_name)
+        ensure_schema(connection, schema_name)
+
+    qualified_locator = quote_table_name(locator_table)
+    locator_prefix = locator_table.replace('"', "").replace(".", "_").strip("_")
+    qualified_chunk_state = quote_table_name(chunk_state_table)
+    chunk_prefix = chunk_state_table.replace('"', "").replace(".", "_").strip("_")
+
+    connection.execute(
+        text(
+            f"""
+            CREATE UNLOGGED TABLE IF NOT EXISTS {qualified_locator} (
+                run_id text NOT NULL,
+                source_table text NOT NULL,
+                source_row_number bigint NOT NULL,
+                source_ctid tid NOT NULL,
+                chunk_id bigint NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (run_id, source_table, source_row_number)
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{locator_prefix}_chunk_lookup
+            ON {qualified_locator} (run_id, source_table, chunk_id)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {qualified_chunk_state} (
+                run_id text NOT NULL,
+                source_table text NOT NULL,
+                chunk_id bigint NOT NULL,
+                range_start bigint NOT NULL,
+                range_end bigint NOT NULL,
+                planned_rows bigint NOT NULL,
+                attempt integer NOT NULL DEFAULT 0,
+                status text NOT NULL,
+                started_at timestamptz,
+                finished_at timestamptz,
+                duration_seconds double precision,
+                written_rows bigint NOT NULL DEFAULT 0,
+                error_message text NOT NULL DEFAULT '',
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (run_id, source_table, chunk_id)
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{chunk_prefix}_status_lookup
+            ON {qualified_chunk_state} (run_id, status)
             """
         )
     )

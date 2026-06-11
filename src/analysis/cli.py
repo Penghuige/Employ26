@@ -23,6 +23,10 @@ from src.analysis.requirement_text_analysis import (
 )
 from src.analysis.structured_common import build_structured_output_dir, write_run_manifest
 from src.analysis.structured_dimension_analysis import StructuredDimensionAnalyzer
+from src.analysis.structured_pg_source import (
+    build_structured_source_coverage,
+    write_structured_source_coverage,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,19 @@ def run_structured(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir) if args.output_dir else build_structured_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     completed_steps: list[str] = []
+    coverage = build_structured_source_coverage()
+    write_structured_source_coverage(output_dir)
+    logger.info(
+        "结构化主输入覆盖率: normalized_rows=%s, matched_rows=%s, matched_share=%.4f",
+        coverage["normalized_rows"],
+        coverage["matched_rows"],
+        coverage["matched_share"],
+    )
+    if float(coverage["matched_share"]) < 0.8:
+        logger.warning(
+            "职业匹配覆盖率偏低（matched_share=%.4f），职业维度相关报表可能不能代表总体数据。",
+            coverage["matched_share"],
+        )
 
     _run_step("occupation_salary_analysis", lambda: OccupationSalaryAnalyzer(base_dir=base_dir, output_dir=output_dir).run())
     completed_steps.append("occupation_salary_analysis")
