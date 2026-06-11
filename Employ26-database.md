@@ -84,7 +84,7 @@
 
 当前建议入口：
 
-- 短期：新增 view 或表，例如 `public.recruitment_jobs_normalized`
+- 当前正式入口：`public.recruitment_jobs_normalized`
 - 中期：如规模继续扩大，可独立为 `recruitment.jobs`
 
 列名策略：
@@ -110,17 +110,24 @@
 
 这是 Label Studio 导入 PostgreSQL 后的人类标注结果，以及 DeepSeek 重标结果。它是第二轮标注实验、训练集构造和人机分歧分析的核心来源。
 
-### 4.5 职业词典与匹配结果层
+### 4.5 职业词典、词汇资源与匹配结果层
 
+- `public.occ_dict_unified`
 - `public.occ_dict`
 - `public.occ_dict_detailed`
 - `public.occ_dict_pro`
-- `public.occupational_classification_dictionary`
+- `public.occ_dict_class`
+- `analysis_lexicon.lexicon_release`
+- `analysis_lexicon.user_dictionary`
+- `analysis_lexicon.stopwords`
+- `analysis_lexicon.phrase_rules`
+- `analysis_lexicon.requirement_rules`
+- `public.requirement_constraint_facts`
 - `public.match_training_features`
 - `public.rag_match_results_v2`
 - `public.job_match_results`
 
-这部分是职业大典、RAG 匹配特征、职业匹配结果的核心表。
+这部分是职业大典、requirement text 统计词汇资源、Phase 2 requirement 约束事实层、RAG 匹配特征、职业匹配结果的核心表。
 
 ### 4.6 技能抽取实验层
 
@@ -194,6 +201,7 @@
 
 主要用于职业词典和职业候选结果对齐：
 
+- `public.occ_dict_unified.code`
 - `public.occ_dict.code`
 - `public.occ_dict_detailed.code`
 - `public.occ_dict_pro.code`
@@ -564,11 +572,44 @@ join public.jd_raw j
 
 #### 词典类表
 
+##### `public.occ_dict_unified`
+
+- 用途：统一职业词典主表
+- 定位：当前正式职业词典入口；同时承载职业叶子节点与分类骨架节点
+- 兼容策略：`public.occ_dict`、`public.occ_dict_detailed`、`public.occ_dict_pro`、`public.occ_dict_class` 已退役为兼容 view
+
+关键字段：
+
+- `node_key`
+- `node_type`
+- `is_terminal`
+- `code`
+- `title`
+- `desc`
+- `tasks`
+- `级别`
+- `分类代码`
+- `职业代码`
+- `大类`
+- `中类`
+- `小类`
+- `细类`
+- `task_list`
+- `task_text_joined`
+- `title_clean`
+- `desc_clean`
+- `hierarchy_text`
+- `aliases`
+- `retrieval_title_text`
+- `retrieval_desc_text`
+- `retrieval_task_text`
+
 ##### `public.occ_dict`
 
 - 近似行数：`1,698`
 - 字段：`code`, `title`, `desc`, `tasks`
-- 用途：基础职业词典
+- 用途：基础职业词典兼容 view
+- 备注：从 `public.occ_dict_unified` 投影职业叶子节点，短期保留用于历史兼容
 
 ##### `public.occ_dict_detailed`
 
@@ -582,12 +623,14 @@ join public.jd_raw j
   - `中类`
   - `小类`
   - `细类`
+- 备注：兼容 view；与 `occ_dict` 基本 1:1，对下游来说更像增强过渡层
 
 ##### `public.occ_dict_pro`
 
 - 近似行数：`1,698`
 - 字段数：`20`
-- 用途：增强版职业词典，适合检索与 RAG
+- 用途：增强版职业词典兼容 view，适合兼容旧检索与 RAG 脚本
+- 备注：字段最全，但正式主入口已切换到 `public.occ_dict_unified`
 
 特征字段：
 
@@ -601,11 +644,20 @@ join public.jd_raw j
 - `retrieval_desc_text`
 - `retrieval_task_text`
 
-##### `public.occupational_classification_dictionary`
+##### `public.occ_dict_class`
 
 - 近似行数：`2,324`
 - 字段数：`7`
-- 用途：职业分层分类字典
+- 用途：职业分层分类字典兼容 view
+- 备注：从 `public.occ_dict_unified` 投影分类骨架节点，不是前三张表的简单重复
+
+当前状态与推荐：
+
+- 四张旧物理表已退役出 `public`，并封存到 `archive_occ`
+- `public.occ_dict`、`public.occ_dict_detailed`、`public.occ_dict_pro`、`public.occ_dict_class` 当前均为兼容 view
+- 下游检索、职业匹配、预处理默认使用 `public.occ_dict_unified`
+- 层级骨架回查优先使用 `public.occ_dict_class`
+- 旧脚本如未及时改造，可临时继续读取兼容 view
 
 #### RAG / 职业匹配类表
 
@@ -693,19 +745,51 @@ join public.jd_raw j
 
 #### 岗位描述解析特征表
 
+##### `public.recruitment_jobs_normalized`
+
+- 用途：三家招聘平台 sample / 后续公共招聘主表的统一规范层
+- 定位：跨平台分析正式入口，保留统一英文列名与来源定位信息
+- 当前标准身份字段：`recruitment_record_id`
+
+关键字段：
+
+- `recruitment_record_id`
+- `source_platform`
+- `source_table`
+- `source_row_number`
+- `source_native_job_id`
+- `dedupe_fingerprint`
+- `job_title`
+- `job_description_raw`
+- `work_city`
+- `company_name`
+- `publish_date`
+- `salary_raw`
+- `education_requirement_raw`
+- `experience_requirement_raw`
+- `company_size_raw`
+- `company_industry_raw`
+
+说明：
+
+- `*_raw` 列先承接原始结构化维度，后续如需标准化列，再以增量方式追加
+- `source_table + source_row_number` 是当前最稳的来源定位键
+- `dedupe_fingerprint` 用于跨批次稳定识别同源招聘记录
+- requirement text 第二阶段直接以这张表作为招聘主表入口
+
 ##### `public.job_description_parsed`
 
 - 用途：岗位描述结构化解析结果表，由 `src.data_pipeline.description_parsing` 写入
 - 定位：解析特征层，不替代三平台原始表，也不继续复制整张 `cleaned_data`
 - 列名：统一使用英文列名，作为后续新流程公共接口
-- 当前唯一键：`recruitment_record_id`
+- 当前线上表仍保留历史契约，主定位键实质上是 `source_table + source_row_number + parser_version`
 
 关键字段：
 
 - `source_platform`
-- `recruitment_record_id`
 - `source_table`
 - `source_row_number`
+- `source_record_id`
 - `job_title`
 - `job_description_raw`
 - `job_description_clean`
@@ -727,10 +811,44 @@ join public.jd_raw j
 
 说明：
 
-- `recruitment_record_id` 是当前权威解析结果的标准身份字段
-- `source_table + source_row_number` 保留为溯源字段，用于回溯原始平台表或统一规范层来源位置
+- 当前线上库里同一 `source_table + source_row_number` 往往存在多版 `parser_version`
+- requirement text 第二阶段运行时应按 `parsed_at DESC` 取每条来源记录的最新权威解析结果
+- `source_table + source_row_number` 是当前最稳的回溯键，用于回溯原始平台表或统一规范层来源位置
 - `description_sections` 保存完整切分 JSON，`requirements_text` / `duties_text` 保存高频检索文本
 - `parser_version` 保留为结果元数据，不再参与公共身份定义
+
+##### `public.requirement_constraint_facts`
+
+- 用途：requirement text 第二阶段正式中间层
+- 定位：一条招聘记录的一条 requirement item 的一个约束事实
+- 来源：`src.analysis.requirement_text_analysis` 抽取后写入
+
+关键字段：
+
+- `fact_id`
+- `recruitment_record_id`
+- `source_table`
+- `source_row_number`
+- `item_index`
+- `item_text_raw`
+- `item_text_normalized`
+- `dimension_name`
+- `constraint_type`
+- `raw_value`
+- `normalized_value`
+- `operator`
+- `value_min`
+- `value_max`
+- `unit`
+- `evidence_text`
+- `rule_id`
+- `extractor_version`
+
+说明：
+
+- 当前只承载非技能 requirement 约束，不承载 hard skill / soft skill 正式分类结论
+- 当前主要维度包括经验、学历、年龄、性别、证书、语言、出差、班次、身体条件、工作方式
+- 这张表是后续 requirement 统计、门槛强度分析和分层报表的唯一正式复用入口
 
 #### 技能抽取类表
 
@@ -930,8 +1048,9 @@ select
     d.小类,
     d.细类
 from public.rag_match_results_v2 r
-left join public.occ_dict_detailed d
-  on d.code = r.best_code;
+left join public.occ_dict_unified d
+  on d.code = r.best_code
+ and d.node_type = 'occupation_leaf';
 ```
 
 ### 9.6 查看技能匹配结果来源
@@ -1063,14 +1182,15 @@ select ...
 #### 职业词典与 RAG 结果
 
 ```sql
-create index if not exists idx_occ_dict_code
-on public.occ_dict (code);
+create unique index if not exists idx_occ_dict_unified_leaf_code
+on public.occ_dict_unified (code)
+where node_type = 'occupation_leaf' and code is not null;
 
-create index if not exists idx_occ_dict_detailed_code
-on public.occ_dict_detailed (code);
+create index if not exists idx_occ_dict_unified_occ_code
+on public.occ_dict_unified ("职业代码");
 
-create index if not exists idx_occ_dict_pro_code
-on public.occ_dict_pro (code);
+create index if not exists idx_occ_dict_unified_class_code
+on public.occ_dict_unified ("分类代码");
 
 create index if not exists idx_rag_match_results_v2_task_id
 on public.rag_match_results_v2 (task_id);

@@ -231,13 +231,13 @@ def load_skill_extraction_config(
         catalog_table=qualify_table_name(
             parsing_settings.get(
                 "catalog_table",
-                "public.occ_dict_detailed",
+                "public.occ_dict_unified",
             )
         ),
         catalog_preprocessed_table=qualify_table_name(
             parsing_settings.get(
                 "catalog_preprocessed_table",
-                "public.occ_dict_pro",
+                "public.occ_dict_unified",
             )
         ),
         jobs_tables=jobs_tables,

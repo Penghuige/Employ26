@@ -29,9 +29,9 @@ DATABASE_SETTINGS = DATABASE_CONFIG.get("database", {})
 JOB_TITLE_PARSING_SETTINGS = DATABASE_CONFIG.get("job_title_parsing", {})
 
 DEFAULT_DB_PATH = str(Path(__file__).resolve().parents[2] / DATABASE_SETTINGS.get("duckdb_path", "output/recruit.duckdb"))
-DEFAULT_CATALOG_TABLE = JOB_TITLE_PARSING_SETTINGS.get("catalog_table", "public.occ_dict_detailed")
+DEFAULT_CATALOG_TABLE = JOB_TITLE_PARSING_SETTINGS.get("catalog_table", "public.occ_dict_unified")
 DEFAULT_CATALOG_PREPROCESSED_TABLE = JOB_TITLE_PARSING_SETTINGS.get(
-    "catalog_preprocessed_table", "public.occ_dict_pro"
+    "catalog_preprocessed_table", "public.occ_dict_unified"
 )
 DEFAULT_JOBS_TABLE = JOB_TITLE_PARSING_SETTINGS.get(
     "jobs_table",
