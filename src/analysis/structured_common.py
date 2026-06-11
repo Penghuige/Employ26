@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
+from src.analysis.analysis_common import build_structured_output_dir, write_run_manifest
 from config.paths import get_project_paths
-
-
-RUN_DATE_FORMAT = "%m-%d"
 
 
 @dataclass(frozen=True)
@@ -23,27 +18,6 @@ class StructuredAnalysisPaths:
     project_root: Path
     integrated_dir: Path
     output_dir: Path
-
-
-def build_structured_output_dir(
-    run_date: datetime | None = None,
-    *,
-    base_output_dir: Path | None = None,
-) -> Path:
-    """构建结构化统计批次输出目录。
-
-    Args:
-        run_date: 可选运行日期；为空时使用当前时间。
-        base_output_dir: 可选 `output/reports` 根目录。
-
-    Returns:
-        Path: `structured_analysis_{mm-dd}` 批次目录。
-    """
-    current = run_date or datetime.now()
-    reports_root = base_output_dir or (get_project_paths().output_dir / "reports")
-    return reports_root / f"structured_analysis_{current.strftime(RUN_DATE_FORMAT)}"
-
-
 def resolve_structured_paths(
     *,
     base_dir: str | Path | None = None,
@@ -115,31 +89,6 @@ def load_integrated_data(
         raise ValueError(f"整合数据缺少必需字段: {details}")
 
     return pd.concat(frames, ignore_index=True), [path.name for path in csv_files]
-
-
-def write_run_manifest(
-    output_dir: Path,
-    *,
-    workflow: str,
-    steps: list[str],
-    params: dict[str, Any],
-    input_files: list[str],
-    output_files: list[str],
-) -> Path:
-    """写入结构化统计运行清单。"""
-    manifest = {
-        "workflow": workflow,
-        "run_timestamp": datetime.now().isoformat(),
-        "steps": steps,
-        "params": params,
-        "input_files": input_files,
-        "output_files": output_files,
-    }
-    output_path = output_dir / "run_manifest.json"
-    output_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return output_path
-
-
 def write_csv_with_legacy_copy(
     df: pd.DataFrame,
     output_dir: Path,

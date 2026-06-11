@@ -3,6 +3,7 @@ from src.data_pipeline.backfill_recruitment_jobs_normalized import (
     build_chunk_insert_sql,
     build_parser,
     build_run_summary,
+    canonicalize_source_table_name,
     plan_chunks,
 )
 from src.db.postgres import build_pg_engine_options
@@ -71,3 +72,8 @@ def test_build_parser_exposes_concurrency_flags():
     assert args.workers == 4
     assert args.chunk_size == 200000
     assert args.benchmark is True
+
+
+def test_canonicalize_source_table_name_quotes_mixed_case_schema():
+    assert canonicalize_source_table_name("Liepin.cleaned_data") == '"Liepin".cleaned_data'
+    assert canonicalize_source_table_name('"51job".sample') == '"51job".sample'

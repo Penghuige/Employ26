@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import text
 
+from src.analysis.analysis_common import (
+    build_mapped_source_table_expr,
+    enrich_common_dimension_columns,
+)
 from src.db.postgres import create_pg_engine, get_table_columns
 from src.db.recruitment_jobs_normalized import (
     DEFAULT_NORMALIZED_TABLE,
@@ -20,15 +23,6 @@ from src.skill_extraction.config import load_skill_extraction_config
 
 
 DEFAULT_MATCH_TABLE = "public.skill_extraction_requirement_matches"
-
-SOURCE_TABLE_ALIASES = {
-    "recruit.main.gd_recruit_qcwy_sample": '"51job".sample',
-    "recruit.main.gd_recruit_liepin_sample": '"Liepin".sample',
-    "recruit.main.zhilian_guangdong_sample": '"Zhilian".sample',
-    "recruit.main.gd_recruit_qcwy_cleaned": '"51job".cleaned_data',
-    "recruit.main.gd_recruit_liepin_cleaned": '"Liepin".cleaned_data',
-    "recruit.main.zhilian_guangdong_cleaned": '"Zhilian".cleaned_data',
-}
 
 STRUCTURED_SOURCE_COLUMNS = [
     "recruitment_record_id",
@@ -96,8 +90,11 @@ def build_structured_source_query(
         )
 
     match_record_id_select = "m.recruitment_record_id" if has_record_id else "NULL::text AS recruitment_record_id"
+    match_source_table_expr = build_mapped_source_table_expr('m."__source_table"')
     match_source_table_select = (
-        _build_match_source_table_expr() if has_source_locator else "NULL::text AS match_source_table"
+        f"{match_source_table_expr} AS match_source_table"
+        if has_source_locator
+        else "NULL::text AS match_source_table"
     )
     match_source_row_number_select = (
         'm."__source_row_number" AS match_source_row_number'
@@ -239,10 +236,7 @@ def build_structured_source_coverage(
                 coverage_query = f"""
                     WITH match_keys AS (
                         SELECT DISTINCT
-                            CASE "__source_table"
-                                {" ".join(f"WHEN {old_name!r} THEN {new_name!r}" for old_name, new_name in SOURCE_TABLE_ALIASES.items())}
-                                ELSE "__source_table"
-                            END AS source_table,
+                            {build_mapped_source_table_expr('"__source_table"')} AS source_table,
                             "__source_row_number" AS source_row_number
                         FROM {match_table_name}
                         WHERE COALESCE("__source_table", '') <> ''
@@ -296,33 +290,12 @@ def write_structured_source_coverage(
         encoding="utf-8",
     )
     return output_path
-
-
-def _build_match_source_table_expr() -> str:
-    """把历史匹配结果表里的来源表名映射到 normalized 使用的 PostgreSQL 表名。"""
-    branches = "\n".join(
-        f"                        WHEN {old_name!r} THEN {new_name!r}"
-        for old_name, new_name in SOURCE_TABLE_ALIASES.items()
-    )
-    return f"""
-                    CASE m."__source_table"
-{branches}
-                        ELSE m."__source_table"
-                    END AS match_source_table
-    """.strip()
-
-
 def normalize_structured_source_dataframe(source_df: pd.DataFrame) -> pd.DataFrame:
     """补齐结构化统计需要的规范列与历史兼容列。"""
-    df = source_df.copy()
+    df = enrich_common_dimension_columns(source_df)
     for column in STRUCTURED_SOURCE_COLUMNS:
         if column not in df.columns:
             df[column] = pd.NA
-
-    df["publish_month"] = df["publish_date"].map(parse_publish_month)
-    df["city_normalized"] = df["work_city"].map(normalize_city)
-    df["industry_normalized"] = df["company_industry_raw"].map(normalize_industry)
-    df["company_size_normalized"] = df["company_size_raw"].map(normalize_company_size)
 
     occupation_title = df["occupation_title"].fillna("").astype(str).str.strip()
     detail_category = df["occupation_detail_category"].fillna("").astype(str).str.strip()
@@ -348,73 +321,3 @@ def normalize_structured_source_dataframe(source_df: pd.DataFrame) -> pd.DataFra
     df["industry_clean"] = df["industry_normalized"]
     df["occupation_confidence"] = df["occupation_confidence"]
     return df
-
-
-def safe_string(value: object) -> str:
-    """把数据库空值安全转成去空白字符串。"""
-    if value is None or pd.isna(value):
-        return ""
-    text_value = str(value).strip()
-    return "" if text_value.lower() == "nan" else text_value
-
-
-def parse_publish_month(value: object) -> str:
-    """把发布时间解析到 YYYY-MM。"""
-    text_value = safe_string(value)
-    if not text_value:
-        return ""
-    parsed = pd.to_datetime(text_value, errors="coerce")
-    if pd.isna(parsed):
-        return ""
-    return parsed.strftime("%Y-%m")
-
-
-def normalize_city(value: object) -> str:
-    """轻量标准化广东城市。"""
-    text_value = safe_string(value)
-    if not text_value:
-        return "未知"
-    cities = [
-        "深圳",
-        "广州",
-        "佛山",
-        "东莞",
-        "惠州",
-        "珠海",
-        "中山",
-        "江门",
-        "肇庆",
-        "汕头",
-        "湛江",
-        "茂名",
-        "韶关",
-        "梅州",
-        "清远",
-        "阳江",
-        "河源",
-        "云浮",
-        "潮州",
-        "揭阳",
-        "汕尾",
-    ]
-    for city in cities:
-        if city in text_value:
-            return city
-    return "其他"
-
-
-def normalize_industry(value: object) -> str:
-    """轻量标准化行业。"""
-    text_value = safe_string(value)
-    if not text_value:
-        return "未知"
-    text_value = re.sub(r"[,，/、]+", ",", text_value)
-    return text_value.split(",")[0].strip() or "未知"
-
-
-def normalize_company_size(value: object) -> str:
-    """轻量标准化公司规模。"""
-    text_value = safe_string(value)
-    if not text_value:
-        return "未知"
-    return text_value

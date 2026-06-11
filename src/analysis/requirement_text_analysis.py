@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +11,12 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import text
 
-from config.paths import get_project_paths
+from src.analysis.analysis_common import (
+    build_mapped_source_table_expr,
+    build_requirement_output_dir,
+    enrich_common_dimension_columns,
+    write_run_manifest,
+)
 from src.analysis.requirement_constraint_extraction import (
     DEFAULT_EXTRACTOR_VERSION,
     convert_constraints_to_fact_rows,
@@ -26,7 +29,12 @@ from src.db.analysis_lexicon import (
     build_lexicon_summary_frames,
     load_current_lexicon_resources,
 )
-from src.db.postgres import create_pg_engine
+from src.db.postgres import create_pg_engine, get_table_columns
+from src.db.recruitment_jobs_normalized import (
+    DEFAULT_NORMALIZED_TABLE,
+    quote_table_name,
+    split_table_name,
+)
 from src.db.requirement_constraint_facts import (
     load_requirement_constraint_facts_dataframe,
     replace_requirement_constraint_facts,
@@ -36,7 +44,7 @@ from src.db.requirement_constraint_facts import (
 DEFAULT_TOP_N = 20
 DEFAULT_GROUP_SIZE = 50
 DEFAULT_MONTHLY_GROUP_SIZE = 20
-RUN_DATE_FORMAT = "%m-%d"
+DEFAULT_PARSED_TABLE = "public.job_description_parsed"
 
 DIMENSION_COLUMNS = [
     "dimension_name",
@@ -114,31 +122,6 @@ LEGACY_OUTPUT_FILES = (
     "noise_terms_filtered.csv",
 )
 
-GUANGDONG_CITIES = [
-    "深圳",
-    "广州",
-    "佛山",
-    "东莞",
-    "惠州",
-    "珠海",
-    "中山",
-    "江门",
-    "肇庆",
-    "汕头",
-    "湛江",
-    "茂名",
-    "韶关",
-    "梅州",
-    "清远",
-    "阳江",
-    "河源",
-    "云浮",
-    "潮州",
-    "揭阳",
-    "汕尾",
-]
-
-
 @dataclass
 class AnalysisParams:
     """Phase 2 统计参数。"""
@@ -149,45 +132,9 @@ class AnalysisParams:
     extractor_version: str = DEFAULT_EXTRACTOR_VERSION
 
 
-def normalize_city(value: object) -> str:
-    """轻量标准化城市。"""
-    text_value = str(value or "").strip()
-    for city in GUANGDONG_CITIES:
-        if city in text_value:
-            return city
-    return "其他" if text_value else "未知"
-
-
-def normalize_industry(value: object) -> str:
-    """轻量标准化行业。"""
-    text_value = str(value or "").strip()
-    if not text_value:
-        return "未知"
-    text_value = re.sub(r"[,，/、]+", ",", text_value)
-    return text_value.split(",")[0].strip() or "未知"
-
-
-def normalize_company_size(value: object) -> str:
-    """轻量标准化公司规模。"""
-    text_value = str(value or "").strip()
-    return text_value or "未知"
-
-
-def parse_publish_month(value: object) -> str:
-    """把发布时间解析到 YYYY-MM。"""
-    text_value = str(value or "").strip()
-    if not text_value:
-        return ""
-    parsed = pd.to_datetime(text_value, errors="coerce")
-    if pd.isna(parsed):
-        return ""
-    return parsed.strftime("%Y-%m")
-
-
 def build_current_output_dir(run_date: datetime | None = None) -> Path:
     """构建 req_analysis 输出目录。"""
-    current = run_date or datetime.now()
-    return get_project_paths().output_dir / "reports" / f"req_analysis_{current.strftime(RUN_DATE_FORMAT)}"
+    return build_requirement_output_dir(run_date=run_date)
 
 
 def _empty_frame(columns: list[str]) -> pd.DataFrame:
@@ -267,62 +214,113 @@ def _cleanup_legacy_outputs(output_dir: Path) -> None:
             target.unlink()
 
 
+def build_requirement_analysis_query(
+    *,
+    normalized_table: str = DEFAULT_NORMALIZED_TABLE,
+    parsed_table: str = DEFAULT_PARSED_TABLE,
+    parsed_columns: set[str] | None = None,
+) -> str:
+    """构建 requirement text 分析主输入查询。"""
+    available_columns = parsed_columns or set()
+    has_record_id = "recruitment_record_id" in available_columns
+    has_source_locator = {"source_table", "source_row_number"}.issubset(available_columns)
+    has_legacy_source_locator = {"__source_table", "__source_row_number"}.issubset(available_columns)
+
+    if not has_record_id and not has_source_locator and not has_legacy_source_locator:
+        raise ValueError(
+            "岗位描述解析表缺少可用关联键：需要 recruitment_record_id，"
+            "或 source_table + source_row_number，或 __source_table + __source_row_number"
+        )
+
+    normalized_table_name = quote_table_name(normalized_table)
+    parsed_table_name = quote_table_name(parsed_table)
+    parsed_record_id_select = "p.recruitment_record_id" if has_record_id else "NULL::text AS recruitment_record_id"
+
+    if has_record_id:
+        parsed_source_table_select = "NULL::text AS parsed_source_table"
+        parsed_source_row_number_select = "NULL::bigint AS parsed_source_row_number"
+        partition_expr = "p.recruitment_record_id"
+        where_expr = "COALESCE(p.recruitment_record_id, '') <> ''"
+        join_expr = "p.recruitment_record_id = n.recruitment_record_id"
+    elif has_source_locator:
+        parsed_source_table_select = (
+            f"{build_mapped_source_table_expr('p.source_table')} AS parsed_source_table"
+        )
+        parsed_source_row_number_select = "p.source_row_number AS parsed_source_row_number"
+        partition_expr = "p.source_table, p.source_row_number"
+        where_expr = "COALESCE(p.source_table, '') <> '' AND p.source_row_number IS NOT NULL"
+        join_expr = "p.parsed_source_table = n.source_table AND p.parsed_source_row_number = n.source_row_number"
+    else:
+        parsed_source_table_expr = build_mapped_source_table_expr('p."__source_table"')
+        parsed_source_table_select = f"{parsed_source_table_expr} AS parsed_source_table"
+        parsed_source_row_number_select = 'p."__source_row_number" AS parsed_source_row_number'
+        partition_expr = 'p."__source_table", p."__source_row_number"'
+        where_expr = 'COALESCE(p."__source_table", \'\') <> \'\' AND p."__source_row_number" IS NOT NULL'
+        join_expr = "p.parsed_source_table = n.source_table AND p.parsed_source_row_number = n.source_row_number"
+
+    return f"""
+        WITH latest_parsed AS (
+            SELECT *
+            FROM (
+                SELECT
+                    {parsed_record_id_select},
+                    {parsed_source_table_select},
+                    {parsed_source_row_number_select},
+                    p.requirements_text,
+                    p.duties_text,
+                    p.sections_brief,
+                    p.parser_version,
+                    p.parsed_at,
+                    row_number() OVER (
+                        PARTITION BY {partition_expr}
+                        ORDER BY
+                            p.parsed_at DESC NULLS LAST,
+                            COALESCE(
+                                NULLIF(regexp_replace(COALESCE(p.parser_version, ''), '\\D', '', 'g'), ''),
+                                '0'
+                            )::integer DESC,
+                            COALESCE(p.requirements_text, '') DESC
+                    ) AS rn
+                FROM {parsed_table_name} p
+                WHERE {where_expr}
+            ) ranked
+            WHERE rn = 1
+        )
+        SELECT
+            n.recruitment_record_id,
+            n.source_platform,
+            n.source_table,
+            n.source_row_number,
+            n.source_native_job_id,
+            n.job_title,
+            n.work_city,
+            n.company_name,
+            n.publish_date,
+            n.salary_raw,
+            n.education_requirement_raw,
+            n.experience_requirement_raw,
+            n.company_size_raw,
+            n.company_industry_raw,
+            p.requirements_text,
+            p.duties_text,
+            p.sections_brief,
+            p.parser_version,
+            p.parsed_at
+        FROM {normalized_table_name} n
+        LEFT JOIN latest_parsed p
+          ON {join_expr}
+    """
+
+
 def load_requirement_analysis_dataframe() -> pd.DataFrame:
     """读取 requirement text 分析主输入。"""
     engine = create_pg_engine()
     try:
         with engine.connect() as connection:
+            parsed_schema, parsed_table = split_table_name(DEFAULT_PARSED_TABLE)
+            parsed_columns = set(get_table_columns(connection, parsed_schema, parsed_table))
             return pd.read_sql_query(
-                text(
-                    """
-                    WITH latest_parsed AS (
-                        SELECT
-                            p.source_table,
-                            p.source_row_number,
-                            p.requirements_text,
-                            p.duties_text,
-                            p.sections_brief,
-                            p.parser_version,
-                            p.parsed_at,
-                            row_number() OVER (
-                                PARTITION BY p.source_table, p.source_row_number
-                                ORDER BY
-                                    p.parsed_at DESC NULLS LAST,
-                                    COALESCE(
-                                        NULLIF(regexp_replace(COALESCE(p.parser_version, ''), '\\D', '', 'g'), ''),
-                                        '0'
-                                    )::integer DESC,
-                                    COALESCE(p.requirements_text, '') DESC
-                            ) AS rn
-                        FROM public.job_description_parsed p
-                    )
-                    SELECT
-                        n.recruitment_record_id,
-                        n.source_platform,
-                        n.source_table,
-                        n.source_row_number,
-                        n.source_native_job_id,
-                        n.job_title,
-                        n.work_city,
-                        n.company_name,
-                        n.publish_date,
-                        n.salary_raw,
-                        n.education_requirement_raw,
-                        n.experience_requirement_raw,
-                        n.company_size_raw,
-                        n.company_industry_raw,
-                        p.requirements_text,
-                        p.duties_text,
-                        p.sections_brief,
-                        p.parser_version,
-                        p.parsed_at
-                    FROM public.recruitment_jobs_normalized n
-                    LEFT JOIN latest_parsed p
-                      ON p.source_table = n.source_table
-                     AND p.source_row_number = n.source_row_number
-                     AND p.rn = 1
-                    """
-                ),
+                text(build_requirement_analysis_query(parsed_columns=parsed_columns)),
                 connection,
             )
     finally:
@@ -660,10 +658,7 @@ def analyze_requirement_texts(
         )
 
     total_records = len(source_df)
-    source_df["publish_month"] = source_df["publish_date"].map(parse_publish_month)
-    source_df["city_normalized"] = source_df["work_city"].map(normalize_city)
-    source_df["industry_normalized"] = source_df["company_industry_raw"].map(normalize_industry)
-    source_df["company_size_normalized"] = source_df["company_size_raw"].map(normalize_company_size)
+    source_df = enrich_common_dimension_columns(source_df)
 
     requirements_nonempty_mask = source_df["requirements_text"].fillna("").astype(str).str.strip() != ""
     duties_fallback_mask = (~requirements_nonempty_mask) & (
@@ -741,53 +736,6 @@ def analyze_requirement_texts(
     )
     lexicon_summary_df = _reshape_lexicon_summary_frames(build_lexicon_summary_frames(resources))
 
-    manifest = {
-        "workflow": "requirement_text_analysis",
-        "run_timestamp": datetime.now().isoformat(),
-        "steps": [
-            "load_requirement_analysis_dataframe",
-            "extract_requirement_constraints",
-            "replace_requirement_constraint_facts",
-            "aggregate_requirement_reports",
-        ],
-        "params": {
-            "top_n": int(params.top_n),
-            "min_group_size": int(params.min_group_size),
-            "min_monthly_group_size": int(params.min_monthly_group_size),
-            "extractor_version": params.extractor_version,
-        },
-        "input_files": [
-            "postgres:public.recruitment_jobs_normalized",
-            "postgres:public.job_description_parsed",
-            "postgres:analysis_lexicon.current_release",
-        ],
-        "output_files": [
-            "run_manifest.json",
-            "coverage_diagnostics.csv",
-            "lexicon_summary.csv",
-            "constraint_dimension_frequency.csv",
-            "constraint_value_distribution.csv",
-            "constraint_by_city_industry.csv",
-            "template_noise_report.csv",
-            "requirement_stringency_index.csv",
-            "report.md",
-            "postgres:public.requirement_constraint_facts",
-        ],
-        "extractor_version": params.extractor_version,
-        "lexicon_version": resources["release"]["version"],
-        "total_normalized_records": int(total_records),
-        "parsed_records_available": int(parsed_available_mask.sum()),
-        "requirements_nonempty_records": int(requirements_nonempty_mask.sum()),
-        "duties_fallback_records": int(duties_fallback_mask.sum()),
-        "records_with_reliable_itemization": int(reliable_itemization_records),
-        "records_with_constraints": int(records_with_constraints),
-        "constraint_fact_rows": int(len(facts_df)),
-    }
-
-    (output_dir / "run_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
     diagnostics_df.to_csv(output_dir / "coverage_diagnostics.csv", index=False, encoding="utf-8-sig")
     lexicon_summary_df.to_csv(output_dir / "lexicon_summary.csv", index=False, encoding="utf-8-sig")
     dimension_df.to_csv(output_dir / "constraint_dimension_frequency.csv", index=False, encoding="utf-8-sig")
@@ -797,7 +745,14 @@ def analyze_requirement_texts(
     stringency_df.to_csv(output_dir / "requirement_stringency_index.csv", index=False, encoding="utf-8-sig")
     (output_dir / "report.md").write_text(
         _build_report_text(
-            manifest=manifest,
+            manifest={
+                "extractor_version": params.extractor_version,
+                "lexicon_version": resources["release"]["version"],
+                "total_normalized_records": int(total_records),
+                "requirements_nonempty_records": int(requirements_nonempty_mask.sum()),
+                "records_with_constraints": int(records_with_constraints),
+                "constraint_fact_rows": int(len(facts_df)),
+            },
             diagnostics_df=diagnostics_df,
             dimension_df=dimension_df,
             value_df=value_df,
@@ -808,6 +763,68 @@ def analyze_requirement_texts(
         ),
         encoding="utf-8",
     )
+
+    manifest_steps = [
+        "load_requirement_analysis_dataframe",
+        "extract_requirement_constraints",
+        "replace_requirement_constraint_facts",
+        "aggregate_requirement_reports",
+    ]
+    manifest_params = {
+        "top_n": int(params.top_n),
+        "min_group_size": int(params.min_group_size),
+        "min_monthly_group_size": int(params.min_monthly_group_size),
+        "extractor_version": params.extractor_version,
+        "normalized_table": DEFAULT_NORMALIZED_TABLE,
+        "parsed_table": DEFAULT_PARSED_TABLE,
+        "fact_table": "public.requirement_constraint_facts",
+    }
+    manifest_input_files = [
+        f"postgres:{DEFAULT_NORMALIZED_TABLE}",
+        f"postgres:{DEFAULT_PARSED_TABLE}",
+        "postgres:analysis_lexicon.current_release",
+    ]
+    manifest_output_files = [
+        "run_manifest.json",
+        "coverage_diagnostics.csv",
+        "lexicon_summary.csv",
+        "constraint_dimension_frequency.csv",
+        "constraint_value_distribution.csv",
+        "constraint_by_city_industry.csv",
+        "template_noise_report.csv",
+        "requirement_stringency_index.csv",
+        "report.md",
+        "postgres:public.requirement_constraint_facts",
+    ]
+    manifest_extra_fields = {
+        "extractor_version": params.extractor_version,
+        "lexicon_version": resources["release"]["version"],
+        "total_normalized_records": int(total_records),
+        "parsed_records_available": int(parsed_available_mask.sum()),
+        "requirements_nonempty_records": int(requirements_nonempty_mask.sum()),
+        "duties_fallback_records": int(duties_fallback_mask.sum()),
+        "records_with_reliable_itemization": int(reliable_itemization_records),
+        "records_with_constraints": int(records_with_constraints),
+        "constraint_fact_rows": int(len(facts_df)),
+    }
+    write_run_manifest(
+        output_dir,
+        workflow="requirement_text_analysis",
+        steps=manifest_steps,
+        params=manifest_params,
+        input_files=manifest_input_files,
+        output_files=manifest_output_files,
+        extra_fields=manifest_extra_fields,
+    )
+
+    manifest = {
+        "workflow": "requirement_text_analysis",
+        "steps": manifest_steps,
+        "params": manifest_params,
+        "input_files": manifest_input_files,
+        "output_files": manifest_output_files,
+        **manifest_extra_fields,
+    }
 
     return {
         "manifest": manifest,
@@ -828,13 +845,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-group-size", type=int, default=DEFAULT_GROUP_SIZE)
     parser.add_argument("--min-monthly-group-size", type=int, default=DEFAULT_MONTHLY_GROUP_SIZE)
     parser.add_argument("--extractor-version", default=DEFAULT_EXTRACTOR_VERSION)
+    parser.add_argument("--output-dir", default="", help="显式指定输出目录")
     return parser
 
 
 def main() -> None:
     """CLI 入口。"""
     args = build_parser().parse_args()
-    output_dir = build_current_output_dir()
+    output_dir = Path(args.output_dir) if str(args.output_dir).strip() else build_current_output_dir()
     analyze_requirement_texts(
         output_dir=output_dir,
         params=AnalysisParams(

@@ -48,10 +48,11 @@ def test_build_parser_accepts_requirements_options():
 
 def test_build_parser_accepts_requirements_run_options():
     args = cli.build_parser().parse_args(
-        ["requirements", "run", "--top-n", "5", "--min-group-size", "2"]
+        ["requirements", "run", "--top-n", "5", "--min-group-size", "2", "--output-dir", "output/reports/custom_req"]
     )
 
     assert args.command == "requirements"
     assert args.requirements_command == "run"
     assert args.top_n == 5
     assert args.min_group_size == 2
+    assert args.output_dir == "output/reports/custom_req"

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 
 import pandas as pd
 
+from src.analysis.analysis_common import normalize_city
 from src.analysis.structured_common import resolve_structured_paths, write_csv_with_legacy_copy
 from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
@@ -223,38 +223,6 @@ def normalize_company_size(value: object) -> str:
     if upper < 10000:
         return "1000_9999"
     return "10000_plus"
-
-
-def normalize_city(value: object) -> str:
-    """标准化广东城市。"""
-    text = str(value or "").strip()
-    cities = [
-        "深圳",
-        "广州",
-        "佛山",
-        "东莞",
-        "惠州",
-        "珠海",
-        "中山",
-        "江门",
-        "肇庆",
-        "汕头",
-        "湛江",
-        "茂名",
-        "韶关",
-        "梅州",
-        "清远",
-        "阳江",
-        "河源",
-        "云浮",
-        "潮州",
-        "揭阳",
-        "汕尾",
-    ]
-    for city in cities:
-        if city in text:
-            return city
-    return "other" if text else "unknown"
 
 
 def main() -> None:

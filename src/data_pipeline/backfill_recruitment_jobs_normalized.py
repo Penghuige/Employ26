@@ -24,6 +24,7 @@ from src.db.recruitment_jobs_normalized import (
     ensure_recruitment_jobs_normalized_table,
     infer_source_platform,
     quote_table_name,
+    split_table_name,
     upsert_recruitment_jobs_normalized,
 )
 
@@ -86,6 +87,14 @@ class ChunkResult:
         if self.duration_seconds <= 0:
             return 0.0
         return float(self.written_rows) / float(self.duration_seconds)
+
+
+def canonicalize_source_table_name(table_name: str) -> str:
+    """把用户输入的 source 表名标准化为可直接用于 SQL 的格式。"""
+    schema_name, raw_table_name = split_table_name(str(table_name).strip())
+    if not schema_name or not raw_table_name:
+        raise ValueError(f"无效 source_table: {table_name!r}")
+    return f'"{schema_name}".{raw_table_name}'
 
 
 def _load_source_dataframe(
@@ -874,7 +883,7 @@ def backfill_recruitment_jobs_normalized(
     chunk_state_table: str = DEFAULT_BACKFILL_CHUNK_STATE_TABLE,
 ) -> dict[str, object]:
     """将三家平台招聘表补充写入统一规范层。"""
-    source_tables = list(source_tables or DEFAULT_SOURCE_TABLES)
+    source_tables = [canonicalize_source_table_name(name) for name in list(source_tables or DEFAULT_SOURCE_TABLES)]
     summary: dict[str, object] = {}
     resolved_batch_size = max(1, int(batch_size))
 

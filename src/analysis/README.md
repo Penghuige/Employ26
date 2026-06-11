@@ -5,6 +5,14 @@
 - 结构化统计主链路：直接读取 PostgreSQL `public.recruitment_jobs_normalized` 和 `public.skill_extraction_requirement_matches`，再导出常规统计报表。
 - requirement text 第二阶段链路：直接读取 PostgreSQL `public.recruitment_jobs_normalized` 和 `public.job_description_parsed`，将 requirement text 抽取成可复用的约束事实层，再导出正式统计产物。
 
+两条链路共用以下基础约定：
+
+- 统一基础表：`public.recruitment_jobs_normalized`
+- 统一轻量标准化字段：`publish_month`、`city_normalized`、`industry_normalized`、`company_size_normalized`
+- 统一批次目录模式：`output/reports/{workflow}_{mm-dd}/`
+- 统一运行清单：`run_manifest.json`
+- 统一报告格式：Markdown
+
 ## 当前推荐入口
 
 优先使用统一 CLI：
@@ -13,6 +21,8 @@
 python -m src.analysis.cli structured run --with-excel
 python -m src.analysis.cli requirements run
 ```
+
+两条链路都支持 `--output-dir` 显式指定本次批次输出目录。
 
 ### 1. 结构化统计主链路
 
@@ -51,6 +61,10 @@ python -m src.analysis.cli structured run
 python -m src.analysis.cli requirements run
 ```
 
+常用选项：
+
+- `--output-dir`：显式指定 requirement text 批次输出目录
+
 单脚本调试入口：
 
 - [`requirement_text_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/requirement_text_analysis.py)
@@ -74,6 +88,7 @@ python -m src.analysis.cli requirements run
 - 主逻辑：`切分 -> 规范化 -> 约束抽取 -> 写入 PostgreSQL -> 聚合报表`
 - 词汇资源：只读取 PostgreSQL `analysis_lexicon` 当前正式 release
 - 规则资源：`analysis_lexicon.requirement_rules`
+- 历史兼容：若 `job_description_parsed` 仍保留 `__source_table` / `__source_row_number` 旧字段，链路会自动映射后再与规范层回连
 
 当前边界：
 

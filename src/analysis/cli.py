@@ -12,6 +12,7 @@ from src.analysis.generate_excel_summary import ExcelReportGenerator
 from src.analysis.generate_standardized_tables import StandardizedTableGenerator
 from src.analysis.industry_trend_analysis import IndustryTrendAnalyzer
 from src.analysis.occupation_salary_analysis import OccupationSalaryAnalyzer
+from src.analysis.analysis_common import collect_output_files
 from src.analysis.requirement_text_analysis import (
     DEFAULT_EXTRACTOR_VERSION,
     DEFAULT_GROUP_SIZE,
@@ -102,15 +103,16 @@ def run_structured(args: argparse.Namespace) -> None:
             "postgres:public.recruitment_jobs_normalized",
             "postgres:public.skill_extraction_requirement_matches",
         ],
-        output_files=sorted(path.name for path in output_dir.iterdir() if path.is_file()),
+        output_files=collect_output_files(output_dir, extra_outputs=["run_manifest.json"]),
     )
 
 
 def run_requirements(args: argparse.Namespace) -> None:
     """运行 requirement text 约束抽取统计链路。"""
     extractor_version = str(args.extractor_version).strip() or DEFAULT_EXTRACTOR_VERSION
+    output_dir = Path(args.output_dir) if args.output_dir else build_current_output_dir()
     analyze_requirement_texts(
-        output_dir=build_current_output_dir(),
+        output_dir=output_dir,
         params=AnalysisParams(
             top_n=int(args.top_n),
             min_group_size=int(args.min_group_size),
@@ -166,6 +168,7 @@ def _add_requirements_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--min-group-size", type=int, default=DEFAULT_GROUP_SIZE)
     parser.add_argument("--min-monthly-group-size", type=int, default=DEFAULT_MONTHLY_GROUP_SIZE)
     parser.add_argument("--extractor-version", default=DEFAULT_EXTRACTOR_VERSION)
+    parser.add_argument("--output-dir", default="", help="显式指定 requirement text 输出目录")
 
 
 def main() -> None:

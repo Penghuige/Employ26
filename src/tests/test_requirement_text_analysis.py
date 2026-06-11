@@ -5,6 +5,22 @@ import pandas as pd
 from src.analysis import requirement_text_analysis as rta
 
 
+def test_build_requirement_analysis_query_falls_back_to_legacy_source_locator():
+    query = rta.build_requirement_analysis_query(
+        parsed_columns={
+            "__source_table",
+            "__source_row_number",
+            "requirements_text",
+            "parser_version",
+            "parsed_at",
+        }
+    )
+
+    assert "p.recruitment_record_id" not in query
+    assert 'p.parsed_source_table = n.source_table' in query
+    assert 'p.parsed_source_row_number = n.source_row_number' in query
+
+
 def test_analyze_requirement_texts_writes_phase2_outputs(monkeypatch, tmp_path: Path):
     resources = {
         "release": {"version": "v_test_phase2"},
