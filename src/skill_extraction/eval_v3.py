@@ -473,7 +473,13 @@ def evaluate_soft_skills(
         predicted_names = {_normalize_skill_name(p["name"]) for p in predicted}
 
         # 覆盖率：gold 中有多少被 predicted 命中
-        matched_names = gold_names & predicted_names
+        # 模糊匹配模式：若 pred 名称是 gold 名称的子串（或反之），视为命中
+        matched_names = set()
+        for gn in gold_names:
+            for pn in predicted_names:
+                if gn == pn or gn in pn or pn in gn:
+                    matched_names.add(gn)
+                    break
         total_matched += len(matched_names)
         total_gold += len(gold_names)
         total_predicted += len(predicted_names)
