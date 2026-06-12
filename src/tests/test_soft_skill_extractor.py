@@ -711,12 +711,20 @@ class TestSoftSkillDictionaryFile:
 
     @pytest.fixture(autouse=True)
     def _load_file(self):
-        """加载词典文件。"""
+        """加载词典文件，支持 shim 重定向。"""
         dict_path = Path(__file__).resolve().parent.parent.parent / "dicts" / "soft_skill_dictionary.json"
         if not dict_path.exists():
             pytest.skip("词典文件不存在，跳过文件验证测试")
         with open(dict_path, "r", encoding="utf-8") as f:
-            self.dictionary = json.load(f)
+            data = json.load(f)
+        # 如果是 shim，跟随 _redirect 加载实际词典
+        if "_redirect" in data:
+            resolve_path = dict_path.parent / data["_redirect"]
+            if not resolve_path.exists():
+                pytest.skip(f"重定向目标不存在: {resolve_path}")
+            with open(resolve_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        self.dictionary = data
 
     def test_schema_version(self):
         """词典 schema_version 为 1。"""

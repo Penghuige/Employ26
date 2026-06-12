@@ -107,3 +107,42 @@ class TestCmdRun:
         version_dir = eval_dir / "v1"
         assert version_dir.exists()
         assert (version_dir / "summary.json").exists()
+
+
+class TestCmdCompare:
+    def test_compare_shows_delta(self, tmp_path, capsys):
+        from src.skill_extraction._eval_registry import append_eval_record
+        from src.skill_extraction.eval_cli import cmd_compare
+
+        record_v1 = {
+            "dict_version": "v1",
+            "evaluated_at": "2026-06-12T14:00:00",
+            "soft_skill_metrics": {"coverage": 0.11, "precision": 0.09, "dimension_accuracy": 0.85},
+            "hard_skill_metrics": {"precision": 0.70, "recall": 0.91, "f1": 0.79, "category_accuracy": 1.0},
+            "gold_source": "annotations",
+            "sample_count": 300,
+        }
+        record_v2 = {
+            "dict_version": "v2",
+            "evaluated_at": "2026-06-12T15:00:00",
+            "soft_skill_metrics": {"coverage": 0.25, "precision": 0.15, "dimension_accuracy": 0.86},
+            "hard_skill_metrics": {"precision": 0.72, "recall": 0.91, "f1": 0.80, "category_accuracy": 1.0},
+            "gold_source": "annotations",
+            "sample_count": 300,
+        }
+
+        append_eval_record(tmp_path, record_v1)
+        append_eval_record(tmp_path, record_v2)
+
+        cmd_compare("v1", "v2", eval_dir=tmp_path)
+        captured = capsys.readouterr()
+        assert "coverage" in captured.out
+        assert "v1" in captured.out
+        assert "v2" in captured.out
+
+    def test_compare_missing_version(self, tmp_path, capsys):
+        from src.skill_extraction.eval_cli import cmd_compare
+
+        cmd_compare("v1", "v99", eval_dir=tmp_path)
+        captured = capsys.readouterr()
+        assert "not found" in captured.out.lower()

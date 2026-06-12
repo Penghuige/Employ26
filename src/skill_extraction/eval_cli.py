@@ -150,6 +150,64 @@ def cmd_run(
     print(f"report dir: {version_report_dir}")
 
 
+def cmd_compare(
+    version_a: str,
+    version_b: str,
+    eval_dir: Optional[Path] = None,
+) -> None:
+    """Compare eval metrics between two dict versions.
+
+    参数:
+        version_a: Baseline version.
+        version_b: Comparison version.
+        eval_dir: Eval output directory.
+    """
+    from ._eval_registry import get_record_by_version
+
+    registry_dir = eval_dir or _get_eval_dir()
+
+    record_a = get_record_by_version(registry_dir, version_a)
+    record_b = get_record_by_version(registry_dir, version_b)
+
+    if not record_a:
+        print(f"version {version_a} not found in registry")
+        return
+    if not record_b:
+        print(f"version {version_b} not found in registry")
+        return
+
+    soft_a = record_a.get("soft_skill_metrics", {})
+    soft_b = record_b.get("soft_skill_metrics", {})
+    hard_a = record_a.get("hard_skill_metrics", {})
+    hard_b = record_b.get("hard_skill_metrics", {})
+
+    def _delta(a: float, b: float) -> str:
+        diff = b - a
+        arrow = "+" if diff > 0 else ("-" if diff < 0 else "=")
+        return f"{arrow}{abs(diff):.4f}"
+
+    def _pct(v: float) -> str:
+        return f"{v * 100:.2f}%"
+
+    metrics = [
+        ("soft-coverage", "coverage", True),
+        ("soft-precision", "precision", True),
+        ("soft-dim_acc", "dimension_accuracy", True),
+        ("hard-precision", "precision", False),
+        ("hard-recall", "recall", False),
+        ("hard-f1", "f1", False),
+        ("hard-cat_acc", "category_accuracy", False),
+    ]
+
+    print(f"\n{'metric':<18} {version_a:<10} {version_b:<10} delta")
+    print("-" * 55)
+    for label, key, is_soft in metrics:
+        a_val = (soft_a if is_soft else hard_a).get(key, 0)
+        b_val = (soft_b if is_soft else hard_b).get(key, 0)
+        d = _delta(a_val, b_val)
+        print(f"{label:<18} {_pct(a_val):<10} {_pct(b_val):<10} {d}")
+
+
 def _update_latest_link(eval_dir: Path, version: str) -> None:
     """更新 latest 链接指向最新版本。
 
@@ -182,7 +240,7 @@ def main() -> None:
     elif args.command == "run":
         cmd_run()
     elif args.command == "compare":
-        logger.info("compare command will be implemented in Task 6")
+        cmd_compare(args.version_a, args.version_b)
     else:
         parser.print_help()
 
