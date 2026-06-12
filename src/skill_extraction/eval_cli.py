@@ -127,6 +127,7 @@ def cmd_run(
         hard_matcher=hard_matcher,
         soft_matcher=soft_matcher,
         llm_client=llm_client,
+        llm_extract=use_llm,
         output_dir=version_report_dir,
     )
 

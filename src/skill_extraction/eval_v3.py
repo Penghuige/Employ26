@@ -433,12 +433,15 @@ def evaluate_soft_skills(
     samples: Sequence[SoftSkillSample],
     soft_matcher: Any,
     llm_client: Any = None,
+    llm_extract: bool = False,
 ) -> SoftSkillMetrics:
     """评估软技能匹配效果。
 
     参数:
         samples: 软技能评估样本列表。
         soft_matcher: 软技能匹配器实例，需实现 match_text(text) 方法。
+        llm_client: LLM 客户端，用于验证或直接抽取。
+        llm_extract: True 时使用 LLM 直接抽取代替词典匹配。
         llm_client: LLM 客户端，用于软技能二次验证。为 None 时跳过 LLM 验证。
 
     返回:
@@ -456,17 +459,25 @@ def evaluate_soft_skills(
 
     for sample in samples:
         # 运行软技能匹配
-        predicted = soft_matcher.match_text(sample.text)
+        if llm_extract and llm_client is not None:
+            from .soft_skill_llm_extractor import extract_soft_skills
 
-        # 可选的 LLM 验证
-        if llm_client is not None and predicted:
-            from .soft_skill_llm_validator import validate_soft_skills
-
-            predicted = validate_soft_skills(
-                candidates=predicted,
-                context_text=sample.text,
+            predicted = extract_soft_skills(
+                text=sample.text,
                 llm_client=llm_client,
             )
+        else:
+            predicted = soft_matcher.match_text(sample.text)
+
+            # 可选的 LLM 验证
+            if llm_client is not None and predicted:
+                from .soft_skill_llm_validator import validate_soft_skills
+
+                predicted = validate_soft_skills(
+                    candidates=predicted,
+                    context_text=sample.text,
+                    llm_client=llm_client,
+                )
 
         gold_skills = sample.gold_skills
         gold_names = {_normalize_skill_name(g["name"]) for g in gold_skills}
@@ -561,6 +572,7 @@ def evaluate(
     hard_matcher: Any,
     soft_matcher: Any,
     llm_client: Any = None,
+    llm_extract: bool = False,
     output_dir: Optional[Path] = None,
 ) -> V3EvalReport:
     """执行 V3 管线的完整评估。
@@ -593,7 +605,7 @@ def evaluate(
     )
 
     # 软技能评估
-    soft_metrics = evaluate_soft_skills(soft_samples, soft_matcher, llm_client)
+    soft_metrics = evaluate_soft_skills(soft_samples, soft_matcher, llm_client, llm_extract=llm_extract)
     logger.info(
         "软技能评估: 覆盖率=%.4f 精确率=%.4f 维度准确率=%.4f",
         soft_metrics.coverage,
