@@ -21,6 +21,7 @@ database:
     - 51job
     - Liepin
     - Zhilian
+    - analysis_lexicon
     - annotations
     - public
 
@@ -45,10 +46,18 @@ tables:
     Zhilian_sample: '"Zhilian".sample'
 
   occupation_dictionary:
+    unified: public.occ_dict_unified
     basic: public.occ_dict
     detailed: public.occ_dict_detailed
     professional: public.occ_dict_pro
-    classification: public.occupational_classification_dictionary
+    classification: public.occ_dict_class
+
+  analysis_lexicon:
+    lexicon_release: analysis_lexicon.lexicon_release
+    user_dictionary: analysis_lexicon.user_dictionary
+    stopwords: analysis_lexicon.stopwords
+    phrase_rules: analysis_lexicon.phrase_rules
+    requirement_rules: analysis_lexicon.requirement_rules
 
   processing_results:
     hard_skill_match_details_dev: public.hard_skill_match_details_dev
@@ -56,6 +65,7 @@ tables:
     hard_skill_match_summary_dev: public.hard_skill_match_summary_dev
     job_description_parsed: public.job_description_parsed
     recruitment_jobs_normalized: public.recruitment_jobs_normalized
+    requirement_constraint_facts: public.requirement_constraint_facts
     match_training_features: public.match_training_features
     rag_match_results_v2: public.rag_match_results_v2
     skill_extraction_requirement_matches: public.skill_extraction_requirement_matches
@@ -65,8 +75,8 @@ tables:
 
 # PostgreSQL 表引用。只允许写真实存在的 PG 表，不写封存的 DuckDB 表名。
 job_title_parsing:
-  catalog_table: public.occ_dict_detailed
-  catalog_preprocessed_table: public.occ_dict_pro
+  catalog_table: public.occ_dict_unified
+  catalog_preprocessed_table: public.occ_dict_unified
   jobs_table:
     - '"Liepin".sample'
     - '"51job".sample'

@@ -28,7 +28,7 @@ LEGACY_TRAINING_OUTPUT_DIR = PROJECT_ROOT / "output" / "rag_round2_training"
 
 DEFAULT_TASK_TABLE = "annotations.label_studio_tasks_v2"
 DEFAULT_DEEPSEEK_TABLE = "annotations.deepseek_relabel_raw"
-DEFAULT_OCC_TABLE = "public.occ_dict_detailed"
+DEFAULT_OCC_TABLE = "public.occ_dict_unified"
 
 
 def ensure_deepseek_table(

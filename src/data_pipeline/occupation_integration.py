@@ -198,7 +198,7 @@ class DataIntegrator:
         
         return None
     
-    def integrate_file(self, nlp_file, occupation_mapping):
+    def integrate_file(self, nlp_file: Path, occupation_mapping: dict):
         """整合单个文件
         
         Args:

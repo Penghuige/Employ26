@@ -94,15 +94,15 @@ python -m src.job_title_parsing.cli preprocess-catalog
 ```
 
 当前配置中的推荐表：
-- 输入表：`public.occ_dict_detailed`
-- 输出表：`public.occ_dict_pro`
+- 输入表：`public.occ_dict_unified`
+- 输出表：`public.occ_dict_unified`
 
 显式指定示例：
 
 ```bash
 python -m src.job_title_parsing.cli preprocess-catalog \
-  --catalog-table public.occ_dict_detailed \
-  --output-table public.occ_dict_pro
+  --catalog-table public.occ_dict_unified \
+  --output-table public.occ_dict_unified
 ```
 
 ### 4.2 批量匹配岗位
@@ -112,7 +112,7 @@ python -m src.job_title_parsing.cli match --jobs-table '"Liepin".sample,"51job".
 ```
 
 说明：
-- 职业大典默认读取：`public.occ_dict_detailed`
+- 职业大典默认读取：`public.occ_dict_unified`
 - 岗位默认读取：`"Liepin".sample`、`"51job".sample`、`"Zhilian".sample`
 - 匹配结果默认写入：`public.job_match_results`
 - 结果中会新增：`platform_terms`、`domain_terms`、`function_terms`、`object_terms`、`conflict_terms`

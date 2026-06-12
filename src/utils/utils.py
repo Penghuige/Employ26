@@ -132,8 +132,8 @@ def load_database_config(config_path: str | Path | None = None) -> Dict[str, Any
                 "duckdb_threads": 32,
             },
             "job_title_parsing": {
-                "catalog_table": "public.occ_dict_detailed",
-                "catalog_preprocessed_table": "public.occ_dict_pro",
+                "catalog_table": "public.occ_dict_unified",
+                "catalog_preprocessed_table": "public.occ_dict_unified",
                 "jobs_table": [
                     '"Liepin".sample',
                     '"51job".sample',

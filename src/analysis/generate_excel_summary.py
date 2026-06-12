@@ -4,7 +4,7 @@
 生成 Excel 汇总报告。
 
 用途:
-- 将 `output/reports` 下已经生成的 CSV 与文本报告整理到一个总 Excel 中，便于交付或人工浏览。
+- 将 `output/reports` 下已经生成的 CSV 与 Markdown 报告整理到一个总 Excel 中，便于交付或人工浏览。
 - 这是“二次汇总脚本”，本身不直接分析原始岗位数据。
 
 前置依赖:
@@ -15,30 +15,32 @@
   `generate_standardized_tables.py`
 
 输入来源:
-- `output/reports/职业类别月度薪资数据.csv`
-- `output/reports/职业月度薪资数据.csv`
-- `output/reports/学历职业类别薪资数据.csv`
-- `output/reports/学历职业薪资数据.csv`
-- `output/reports/学历月度趋势.csv`
-- 以及目录中的多个 `*.txt` 分析报告
+- `output/reports/structured_analysis_{mm-dd}/salary_by_occupation_category_month.csv`
+- `output/reports/structured_analysis_{mm-dd}/salary_by_occupation_month.csv`
+- `output/reports/structured_analysis_{mm-dd}/salary_by_education_occupation_category.csv`
+- `output/reports/structured_analysis_{mm-dd}/salary_by_education_occupation.csv`
+- `output/reports/structured_analysis_{mm-dd}/standardized_salary_by_education_month.csv`
+- 以及目录中的多个 `*.md` 分析报告
 
 输出文件:
 - `output/reports/广东省招聘数据分析汇总报告.xlsx`
 
 运行方式:
 - `python -m src.analysis.generate_excel_summary`
-- 或 `python src/analysis/generate_excel_summary.py`
 
 维护说明:
 - 该脚本主要负责汇总，不与 `src` 下其他建模/抽取脚本重复。
 """
 
-import pandas as pd
-from pathlib import Path
 import logging
+from pathlib import Path
+
+import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils.dataframe import dataframe_to_rows
+
+from src.analysis.structured_common import build_structured_output_dir
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -47,7 +49,7 @@ logger = logging.getLogger(__name__)
 class ExcelReportGenerator:
     """Excel汇总报告生成器"""
     
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, output_dir=None):
         """初始化"""
         if base_dir is None:
             base_dir = Path(__file__).parent.parent.parent
@@ -55,7 +57,10 @@ class ExcelReportGenerator:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.reports_dir = base_dir / 'output' / 'reports'
+        self.reports_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         self.output_file = self.reports_dir / '广东省招聘数据分析汇总报告.xlsx'
         
         logger.info("Excel汇总报告生成器初始化完成")
@@ -84,35 +89,40 @@ class ExcelReportGenerator:
             # ========================================
             
             # 3. 学历月度趋势（薪资）
-            self._add_sheet(writer, '学历月度趋势.csv', '学历月度趋势')
+            self._add_sheet(writer, 'standardized_salary_by_education_month.csv', '学历月度趋势', '学历月度趋势.csv')
             
             # 4. 职业类别年度学历分布（新增）
-            self._add_sheet(writer, '职业类别年度学历分布.csv', '职业类别年度学历')
+            self._add_sheet(writer, 'education_by_occupation_category_year.csv', '职业类别年度学历', '职业类别年度学历分布.csv')
             
             # 5. 职业年度学历分布（新增）
-            self._add_sheet(writer, '职业年度学历分布.csv', '职业年度学历')
+            self._add_sheet(writer, 'education_by_occupation_year.csv', '职业年度学历', '职业年度学历分布.csv')
             
             # 6. 职业类别月度学历分布（新增）
-            self._add_sheet(writer, '职业类别月度学历分布.csv', '职业类别月度学历')
+            self._add_sheet(writer, 'education_by_occupation_category_month.csv', '职业类别月度学历', '职业类别月度学历分布.csv')
             
             # 7. 职业月度学历分布（新增）
-            self._add_sheet(writer, '职业月度学历分布.csv', '职业月度学历')
+            self._add_sheet(writer, 'education_by_occupation_month.csv', '职业月度学历', '职业月度学历分布.csv')
             
             # ========================================
             # 行业维度统计
             # ========================================
             
             # 8. 城市行业月度数据
-            self._add_sheet(writer, '城市行业月度数据.csv', '城市×行业月度')
+            self._add_sheet(writer, 'city_industry_monthly_jobs.csv', '城市×行业月度', '城市行业月度数据.csv')
             
             # 9. 行业月度数据
-            self._add_sheet(writer, '行业月度数据.csv', '行业月度')
+            self._add_sheet(writer, 'industry_monthly_jobs.csv', '行业月度', '行业月度数据.csv')
+
+            # 10. 经验要求与公司规模补充维度
+            self._add_sheet(writer, 'experience_by_occupation.csv', '职业经验要求', '职业经验要求分布.csv')
+            self._add_sheet(writer, 'company_size_by_city_industry.csv', '城市行业公司规模', '城市行业公司规模分布.csv')
+            self._add_sheet(writer, 'city_occupation_demand.csv', '城市职业需求', '城市职业需求分布.csv')
             
             # ========================================
             # 报告摘要
             # ========================================
             
-            # 10. 添加文本报告摘要
+            # 11. 添加 Markdown 报告摘要
             self._add_text_summary(writer)
         
         logger.info(f"\n✅ Excel汇总报告已生成: {self.output_file}")
@@ -123,8 +133,8 @@ class ExcelReportGenerator:
         logger.info("  📊 合并职业月度薪资数据...")
         
         # 读取职业类别数据
-        category_file = self.reports_dir / '职业类别月度薪资数据.csv'
-        occupation_file = self.reports_dir / '职业月度薪资数据.csv'
+        category_file = self._resolve_csv_file('salary_by_occupation_category_month.csv', '职业类别月度薪资数据.csv')
+        occupation_file = self._resolve_csv_file('salary_by_occupation_month.csv', '职业月度薪资数据.csv')
         
         dfs = []
         
@@ -133,7 +143,9 @@ class ExcelReportGenerator:
             df_category = pd.read_csv(category_file, encoding='utf-8-sig')
             df_category['统计口径'] = '职业类别（汇总）'
             df_category['职业/类别'] = df_category['occupation_category']
-            df_category = df_category[['统计口径', '职业/类别', 'publish_month', '平均薪资', '岗位数量']]
+            salary_column = 'avg_salary' if 'avg_salary' in df_category.columns else '平均薪资'
+            count_column = 'job_count' if 'job_count' in df_category.columns else '岗位数量'
+            df_category = df_category[['统计口径', '职业/类别', 'publish_month', salary_column, count_column]]
             dfs.append(df_category)
             logger.info(f"    ✅ 职业类别数据: {len(df_category)} 行")
         
@@ -142,7 +154,9 @@ class ExcelReportGenerator:
             df_occupation = pd.read_csv(occupation_file, encoding='utf-8-sig')
             df_occupation['统计口径'] = '职业（主口径）'
             df_occupation['职业/类别'] = df_occupation['occupation_core']
-            df_occupation = df_occupation[['统计口径', '职业/类别', 'publish_month', '平均薪资', '岗位数量']]
+            salary_column = 'avg_salary' if 'avg_salary' in df_occupation.columns else '平均薪资'
+            count_column = 'job_count' if 'job_count' in df_occupation.columns else '岗位数量'
+            df_occupation = df_occupation[['统计口径', '职业/类别', 'publish_month', salary_column, count_column]]
             dfs.append(df_occupation)
             logger.info(f"    ✅ 职业数据: {len(df_occupation)} 行")
         
@@ -172,8 +186,8 @@ class ExcelReportGenerator:
         logger.info("  📊 合并职业学历薪资数据...")
         
         # 读取数据
-        category_file = self.reports_dir / '学历职业类别薪资数据.csv'
-        occupation_file = self.reports_dir / '学历职业薪资数据.csv'
+        category_file = self._resolve_csv_file('salary_by_education_occupation_category.csv', '学历职业类别薪资数据.csv')
+        occupation_file = self._resolve_csv_file('salary_by_education_occupation.csv', '学历职业薪资数据.csv')
         
         dfs = []
         
@@ -182,7 +196,10 @@ class ExcelReportGenerator:
             df_category = pd.read_csv(category_file, encoding='utf-8-sig')
             df_category['统计口径'] = '职业类别（汇总）'
             df_category['职业/类别'] = df_category['occupation_category']
-            df_category = df_category[['统计口径', '职业/类别', '学历', '平均薪资', '岗位数量']]
+            education_column = 'education_level' if 'education_level' in df_category.columns else '学历'
+            salary_column = 'avg_salary' if 'avg_salary' in df_category.columns else '平均薪资'
+            count_column = 'job_count' if 'job_count' in df_category.columns else '岗位数量'
+            df_category = df_category[['统计口径', '职业/类别', education_column, salary_column, count_column]]
             dfs.append(df_category)
             logger.info(f"    ✅ 职业类别数据: {len(df_category)} 行")
         
@@ -191,7 +208,10 @@ class ExcelReportGenerator:
             df_occupation = pd.read_csv(occupation_file, encoding='utf-8-sig')
             df_occupation['统计口径'] = '职业（主口径）'
             df_occupation['职业/类别'] = df_occupation['occupation_core']
-            df_occupation = df_occupation[['统计口径', '职业/类别', '学历', '平均薪资', '岗位数量']]
+            education_column = 'education_level' if 'education_level' in df_occupation.columns else '学历'
+            salary_column = 'avg_salary' if 'avg_salary' in df_occupation.columns else '平均薪资'
+            count_column = 'job_count' if 'job_count' in df_occupation.columns else '岗位数量'
+            df_occupation = df_occupation[['统计口径', '职业/类别', education_column, salary_column, count_column]]
             dfs.append(df_occupation)
             logger.info(f"    ✅ 职业数据: {len(df_occupation)} 行")
         
@@ -219,9 +239,16 @@ class ExcelReportGenerator:
         else:
             logger.warning(f"    ⚠️  未找到职业学历薪资数据文件")
     
-    def _add_sheet(self, writer, csv_filename, sheet_name):
+    def _resolve_csv_file(self, canonical_filename, legacy_filename):
+        """优先读取规范 CSV，兼容历史中文文件名。"""
+        canonical_path = self.reports_dir / canonical_filename
+        if canonical_path.exists():
+            return canonical_path
+        return self.reports_dir / legacy_filename
+    
+    def _add_sheet(self, writer, csv_filename, sheet_name, legacy_filename=None):
         """添加CSV数据到Excel工作表"""
-        csv_file = self.reports_dir / csv_filename
+        csv_file = self._resolve_csv_file(csv_filename, legacy_filename or csv_filename)
         
         if not csv_file.exists():
             logger.warning(f"  ⚠️  文件不存在，跳过: {csv_filename}")
@@ -269,24 +296,33 @@ class ExcelReportGenerator:
             adjusted_width = min(max_length + 2, 50)
             worksheet.column_dimensions[column_letter].width = adjusted_width
     
+    def _resolve_report_file(self, markdown_filename):
+        """优先读取 Markdown 报告，兼容历史 TXT 报告。"""
+        markdown_path = self.reports_dir / markdown_filename
+        if markdown_path.exists():
+            return markdown_path
+        legacy_path = markdown_path.with_suffix('.txt')
+        if legacy_path.exists():
+            return legacy_path
+        return None
+    
     def _add_text_summary(self, writer):
-        """添加文本报告摘要"""
+        """添加报告摘要"""
         logger.info("  📝 添加报告摘要...")
         
-        # 读取文本报告
+        # 读取 Markdown 报告，必要时兼容历史 TXT 报告。
         summaries = []
         
         report_files = [
-            ('职业类别薪资分析报告.txt', '职业薪资分析'),
-            ('学历需求分布分析报告.txt', '学历需求分布'),
-            ('行业景气度分析报告.txt', '行业景气度'),
-            ('时间趋势分析报告.txt', '时间趋势'),
-            ('薪资分析报告.txt', '基础薪资分析')
+            ('职业类别薪资分析报告.md', '职业薪资分析'),
+            ('学历需求分布分析报告.md', '学历需求分布'),
+            ('行业景气度分析报告.md', '行业景气度'),
+            ('结构化维度补充分析报告.md', '结构化维度补充'),
         ]
         
         for filename, title in report_files:
-            report_file = self.reports_dir / filename
-            if report_file.exists():
+            report_file = self._resolve_report_file(filename)
+            if report_file is not None:
                 try:
                     with open(report_file, 'r', encoding='utf-8') as f:
                         content = f.read()

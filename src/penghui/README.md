@@ -19,7 +19,7 @@
 - 其中历史任务的正式招聘身份应优先读取 `recruitment_record_id`；旧 `row_id` 只表示导出快照行号，不再代表招聘源主键
 - 在 `src/penghui/common.py` 的公共加载口径里，`task_id` 只表示标注任务身份，不能替代 `recruitment_record_id`
 - DeepSeek 重标结果：优先 PostgreSQL `annotations.deepseek_relabel_raw`，首次缺表或空表时会从 `output/deepseek_relabel/deepseek_relabel_raw.jsonl` 回填
-- 职业词典：PostgreSQL `public.occ_dict_detailed`
+- 职业词典：PostgreSQL `public.occ_dict_unified`
 - 基础向量模型：`config.paths.get_project_paths().bge_model_path` 或环境变量 `EMPLOYDATA_BGE_MODEL_PATH`
 
 常见输出位置：

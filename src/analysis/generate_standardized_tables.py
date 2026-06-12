@@ -4,32 +4,34 @@
 生成规范化汇总表。
 
 用途:
-- 将 `output/reports` 中已有的分析产物重新整理为更稳定、列名更统一的交付表。
+- 将结构化统计批次目录中已有的分析产物重新整理为更稳定、列名更统一的交付表。
 - 同时补一张 `学历月度趋势.csv`，方便后续 Excel 汇总或外部消费。
 
 前置依赖:
 - `职业学历薪资`、`职业月度薪资` 两张表依赖 `occupation_salary_analysis.py` 先生成源 CSV。
-- `学历月度趋势` 直接读取 `output/integrated/*_整合_*.csv`，因此也依赖
-  `src/preprocessing/integrate_occupation.py` 先完成数据整合。
+- `学历月度趋势` 和职业类别映射直接读取 PostgreSQL 结构化统计主输入。
 
 主要输出:
-- `output/reports/职业学历薪资.csv`
-- `output/reports/职业月度薪资.csv`
-- `output/reports/学历月度趋势.csv`
+- `output/reports/structured_analysis_{mm-dd}/standardized_salary_by_education_occupation.csv`
+- `output/reports/structured_analysis_{mm-dd}/standardized_salary_by_occupation_month.csv`
+- `output/reports/structured_analysis_{mm-dd}/standardized_salary_by_education_month.csv`
 
 运行方式:
 - `python -m src.analysis.generate_standardized_tables`
-- 或 `python src/analysis/generate_standardized_tables.py`
 
 维护说明:
 - 这是当前目录中的“二次整理层”，主要解决交付口径统一问题。
 - `parse_salary` 逻辑与其他分析脚本存在重复，后续如继续维护可考虑抽到公共工具模块。
 """
 
-import pandas as pd
-from pathlib import Path
 import logging
 import re
+from pathlib import Path
+
+import pandas as pd
+
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -73,7 +75,7 @@ def parse_salary(salary_str):
 class StandardizedTableGenerator:
     """规范化汇总表生成器"""
     
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, output_dir=None):
         """初始化"""
         if base_dir is None:
             base_dir = Path(__file__).parent.parent.parent
@@ -81,7 +83,10 @@ class StandardizedTableGenerator:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.reports_dir = base_dir / 'output' / 'reports'
+        self.reports_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("规范化汇总表生成器初始化完成")
     
@@ -94,8 +99,14 @@ class StandardizedTableGenerator:
         logger.info("=" * 60)
         
         # 读取职业数据
-        occupation_file = self.reports_dir / '学历职业薪资数据.csv'
-        category_file = self.reports_dir / '学历职业类别薪资数据.csv'
+        occupation_file = self._resolve_input_file(
+            'salary_by_education_occupation.csv',
+            '学历职业薪资数据.csv',
+        )
+        category_file = self._resolve_input_file(
+            'salary_by_education_occupation_category.csv',
+            '学历职业类别薪资数据.csv',
+        )
         
         if not occupation_file.exists() or not category_file.exists():
             logger.error("  错误：缺少必要的源文件")
@@ -113,15 +124,19 @@ class StandardizedTableGenerator:
         # 从原始数据中获取职业到职业类别的映射
         occupation_to_category = self._load_occupation_category_mapping()
         
-        df_occupation['职业类别'] = df_occupation['occupation_core'].map(occupation_to_category)
+        occupation_column = 'occupation_core'
+        education_column = 'education_level' if 'education_level' in df_occupation.columns else '学历'
+        salary_column = 'avg_salary' if 'avg_salary' in df_occupation.columns else '平均薪资'
+        count_column = 'job_count' if 'job_count' in df_occupation.columns else '岗位数量'
+        df_occupation['职业类别'] = df_occupation[occupation_column].map(occupation_to_category)
         
         # 重命名和选择列
         df_result = df_occupation[[
-            'occupation_core',
+            occupation_column,
             '职业类别',
-            '学历',
-            '平均薪资',
-            '岗位数量'
+            education_column,
+            salary_column,
+            count_column,
         ]].copy()
         
         # 重命名列为标准名称
@@ -147,8 +162,15 @@ class StandardizedTableGenerator:
         df_result = df_result.drop('学历排序', axis=1)
         
         # 保存
-        output_file = self.reports_dir / '职业学历薪资.csv'
-        df_result.to_csv(output_file, index=False, encoding='utf-8-sig')
+        output_files = write_csv_with_legacy_copy(
+            df_result.rename(
+                columns={'职业': 'occupation_core', '职业类别': 'occupation_category', '学历': 'education_level', '平均薪资': 'avg_salary', '岗位数量': 'job_count'}
+            ),
+            self.reports_dir,
+            canonical_filename='standardized_salary_by_education_occupation.csv',
+            legacy_filename='职业学历薪资.csv',
+        )
+        output_file = self.reports_dir / output_files[0]
         
         logger.info(f"  成功：已生成 {output_file.name}")
         logger.info(f"  总记录数: {len(df_result)}")
@@ -166,7 +188,10 @@ class StandardizedTableGenerator:
         logger.info("=" * 60)
         
         # 读取职业数据
-        occupation_file = self.reports_dir / '职业月度薪资数据.csv'
+        occupation_file = self._resolve_input_file(
+            'salary_by_occupation_month.csv',
+            '职业月度薪资数据.csv',
+        )
         
         if not occupation_file.exists():
             logger.error("  错误：缺少必要的源文件")
@@ -178,15 +203,19 @@ class StandardizedTableGenerator:
         
         # 添加职业类别字段
         occupation_to_category = self._load_occupation_category_mapping()
-        df_occupation['职业类别'] = df_occupation['occupation_core'].map(occupation_to_category)
+        occupation_column = 'occupation_core'
+        month_column = 'publish_month'
+        salary_column = 'avg_salary' if 'avg_salary' in df_occupation.columns else '平均薪资'
+        count_column = 'job_count' if 'job_count' in df_occupation.columns else '岗位数量'
+        df_occupation['职业类别'] = df_occupation[occupation_column].map(occupation_to_category)
         
         # 重命名和选择列
         df_result = df_occupation[[
-            'occupation_core',
+            occupation_column,
             '职业类别',
-            'publish_month',
-            '平均薪资',
-            '岗位数量'
+            month_column,
+            salary_column,
+            count_column,
         ]].copy()
         
         # 重命名列为标准名称
@@ -209,8 +238,15 @@ class StandardizedTableGenerator:
         df_result = df_result.sort_values(['职业类别', '职业', '月度'])
         
         # 保存
-        output_file = self.reports_dir / '职业月度薪资.csv'
-        df_result.to_csv(output_file, index=False, encoding='utf-8-sig')
+        output_files = write_csv_with_legacy_copy(
+            df_result.rename(
+                columns={'职业': 'occupation_core', '职业类别': 'occupation_category', '月度': 'publish_month', '平均薪资': 'avg_salary', '岗位数量': 'job_count'}
+            ),
+            self.reports_dir,
+            canonical_filename='standardized_salary_by_occupation_month.csv',
+            legacy_filename='职业月度薪资.csv',
+        )
+        output_file = self.reports_dir / output_files[0]
         
         logger.info(f"  成功：已生成 {output_file.name}")
         logger.info(f"  总记录数: {len(df_result)}")
@@ -229,22 +265,12 @@ class StandardizedTableGenerator:
         logger.info("\n生成汇总表：学历月度趋势")
         logger.info("=" * 60)
         
-        # 从整合数据中读取原始数据
-        integrated_dir = self.base_dir / 'output' / 'integrated'
-        
-        all_data = []
-        for csv_file in integrated_dir.glob('*_整合_*.csv'):
-            # 读取所有数据
-            df = pd.read_csv(csv_file, encoding='utf-8')
-            # 选择需要的列
-            df = df[['学历要求', 'publish_month', '薪资水平']].copy()
-            all_data.append(df)
-        
-        if not all_data:
-            logger.error("  错误：未找到整合数据文件")
+        df = load_structured_analysis_dataframe()[['学历要求', 'publish_month', '薪资水平']].copy()
+
+        if df.empty:
+            logger.error("  错误：PostgreSQL 结构化统计主输入为空")
             return None
-        
-        df = pd.concat(all_data, ignore_index=True)
+
         logger.info(f"  读取原始数据: {len(df):,} 行")
         
         # 解析薪资
@@ -303,8 +329,15 @@ class StandardizedTableGenerator:
         df_result = df_result.drop('学历排序', axis=1)
         
         # 保存
-        output_file = self.reports_dir / '学历月度趋势.csv'
-        df_result.to_csv(output_file, index=False, encoding='utf-8-sig')
+        output_files = write_csv_with_legacy_copy(
+            df_result.rename(
+                columns={'学历': 'education_level', '月度': 'publish_month', '平均薪资': 'avg_salary', '岗位数量': 'job_count'}
+            ),
+            self.reports_dir,
+            canonical_filename='standardized_salary_by_education_month.csv',
+            legacy_filename='学历月度趋势.csv',
+        )
+        output_file = self.reports_dir / output_files[0]
         
         logger.info(f"  成功：已生成 {output_file.name}")
         logger.info(f"  总记录数: {len(df_result)}")
@@ -323,27 +356,30 @@ class StandardizedTableGenerator:
     def _load_occupation_category_mapping(self):
         """加载职业到职业类别的映射
         
-        从整合数据中提取映射关系
+        从 PostgreSQL 结构化统计主输入中提取映射关系
         """
-        integrated_dir = self.base_dir / 'output' / 'integrated'
-        
         mapping = {}
-        
-        # 读取所有整合数据文件
-        for csv_file in integrated_dir.glob('*_整合_*.csv'):
-            df = pd.read_csv(csv_file, encoding='utf-8', usecols=['occupation_core', 'occupation_category'])
-            df = df[df['occupation_core'].notna() & df['occupation_category'].notna()]
-            
-            # 构建映射（一个职业对应一个类别）
-            for _, row in df.iterrows():
-                occupation = row['occupation_core']
-                category = row['occupation_category']
-                if occupation not in mapping:
-                    mapping[occupation] = category
+
+        df = load_structured_analysis_dataframe()[['occupation_core', 'occupation_category']].copy()
+        df = df[df['occupation_core'].notna() & df['occupation_category'].notna()]
+
+        # 构建映射（一个职业对应一个类别）
+        for _, row in df.iterrows():
+            occupation = row['occupation_core']
+            category = row['occupation_category']
+            if occupation not in mapping:
+                mapping[occupation] = category
         
         logger.info(f"  加载职业类别映射: {len(mapping)} 个职业")
         
         return mapping
+
+    def _resolve_input_file(self, canonical_filename, legacy_filename):
+        """优先读取规范文件名，兼容历史中文文件名。"""
+        canonical_path = self.reports_dir / canonical_filename
+        if canonical_path.exists():
+            return canonical_path
+        return self.reports_dir / legacy_filename
     
     def generate_all(self):
         """生成所有规范化汇总表"""

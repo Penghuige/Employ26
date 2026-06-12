@@ -2,12 +2,11 @@
 行业景气度分析模块。
 
 用途:
-- 基于 `output/integrated/*_整合_*.csv` 统计城市 × 行业 × 月度的招聘量变化。
-- 输出文本报告、CSV 明细和 HTML 图表，用于观察行业热度与城市行业结构。
+- 基于 PostgreSQL `public.recruitment_jobs_normalized` 统计城市 × 行业 × 月度招聘量变化。
+- 输出 Markdown 报告、CSV 明细和 HTML 图表，用于观察行业热度与城市行业结构。
 
 前置依赖:
-- 先运行 `src/preprocessing/integrate_occupation.py`，确保整合数据中存在
-  `publish_month`、`city_clean`、`industry_clean` 等标准化字段。
+- 先完成统一招聘规范层回填；城市、行业和月份字段由结构化统计数据源统一标准化。
 
 关键输入字段:
 - `publish_month`
@@ -15,23 +14,25 @@
 - `industry_clean`
 
 输出文件:
-- `output/reports/城市行业月度数据.csv`
-- `output/reports/行业月度数据.csv`
-- `output/reports/行业景气度分析报告.txt`
+- `output/reports/structured_analysis_{mm-dd}/city_industry_monthly_jobs.csv`
+- `output/reports/structured_analysis_{mm-dd}/industry_monthly_jobs.csv`
+- `output/reports/行业景气度分析报告.md`
 - `output/reports/行业景气度分析图.html`
 
 运行方式:
 - `python -m src.analysis.industry_trend_analysis`
-- 或 `python src/analysis/industry_trend_analysis.py`
 
 维护说明:
-- 当前脚本属于新版分析链路，和 `preprocessing/integrate_occupation.py` 的标准化行业字段直接配套。
+- 当前脚本属于新版分析链路，城市和行业标准化字段由 PostgreSQL 结构化统计数据源统一补齐。
 """
 
-import pandas as pd
-from pathlib import Path
 import logging
-from collections import defaultdict
+from pathlib import Path
+
+import pandas as pd
+
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 class IndustryTrendAnalyzer:
     """行业景气度分析器"""
     
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, output_dir=None):
         """初始化"""
         if base_dir is None:
             base_dir = Path(__file__).parent.parent.parent
@@ -48,23 +49,18 @@ class IndustryTrendAnalyzer:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("行业景气度分析器初始化完成")
     
     def load_data(self):
-        """加载整合后的数据"""
-        logger.info("加载数据...")
-        
-        all_data = []
-        for csv_file in self.data_dir.glob('*_整合_*.csv'):
-            logger.info(f"  读取: {csv_file.name}")
-            df = pd.read_csv(csv_file, encoding='utf-8')
-            all_data.append(df)
-        
-        df = pd.concat(all_data, ignore_index=True)
+        """加载 PostgreSQL 结构化统计主输入。"""
+        logger.info("从 PostgreSQL 加载结构化统计主输入...")
+
+        df = load_structured_analysis_dataframe()
         logger.info(f"总数据: {len(df):,} 行")
         
         # 过滤有效数据
@@ -112,6 +108,16 @@ class IndustryTrendAnalyzer:
         
         # 只保留招聘量>=10的数据点
         industry_monthly = industry_monthly[industry_monthly['job_count'] >= 10]
+        industry_monthly = industry_monthly.sort_values(['industry_clean', 'publish_month']).copy()
+        industry_monthly['previous_month_job_count'] = (
+            industry_monthly.groupby('industry_clean')['job_count'].shift(1)
+        )
+        industry_monthly['month_over_month_change'] = (
+            industry_monthly['job_count'] - industry_monthly['previous_month_job_count']
+        )
+        industry_monthly['month_over_month_growth_rate'] = (
+            industry_monthly['month_over_month_change'] / industry_monthly['previous_month_job_count']
+        )
         
         # 找出Top行业
         industry_total = df.groupby('industry_clean').size().sort_values(ascending=False)
@@ -126,19 +132,15 @@ class IndustryTrendAnalyzer:
         """保存分析报告"""
         logger.info("\n保存分析报告...")
         
-        report_file = self.output_dir / '行业景气度分析报告.txt'
+        report_file = self.output_dir / '行业景气度分析报告.md'
         with open(report_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 80 + "\n")
-            f.write("广东省招聘数据 - 行业景气度分析报告\n")
-            f.write("=" * 80 + "\n\n")
+            f.write("# 广东省招聘数据 - 行业景气度分析报告\n\n")
             
-            f.write("一、行业整体招聘量排行 (Top 30)\n")
-            f.write("-" * 80 + "\n")
+            f.write("## 一、行业整体招聘量排行 (Top 30)\n\n")
             for i, (industry, count) in enumerate(industry_total.head(30).items(), 1):
                 f.write(f"{i:3d}. {industry:40s}: {count:10,} 个岗位\n")
             
-            f.write("\n\n二、各城市主要行业分布\n")
-            f.write("-" * 80 + "\n")
+            f.write("\n\n## 二、各城市主要行业分布\n\n")
             for city in sorted(city_industry_total['city_clean'].unique()):
                 city_data = city_industry_total[city_industry_total['city_clean'] == city].head(10)
                 f.write(f"\n{city}:\n")
@@ -147,11 +149,19 @@ class IndustryTrendAnalyzer:
         
         logger.info(f"报告已保存: {report_file}")
         
-        # 保存CSV数据
-        trend_stats.to_csv(self.output_dir / '城市行业月度数据.csv', 
-                          index=False, encoding='utf-8-sig')
-        industry_monthly.to_csv(self.output_dir / '行业月度数据.csv',
-                               index=False, encoding='utf-8-sig')
+        # 保存 CSV 数据：英文规范文件名为主，中文历史文件名兼容旧汇总脚本。
+        write_csv_with_legacy_copy(
+            trend_stats,
+            self.output_dir,
+            canonical_filename='city_industry_monthly_jobs.csv',
+            legacy_filename='城市行业月度数据.csv',
+        )
+        write_csv_with_legacy_copy(
+            industry_monthly,
+            self.output_dir,
+            canonical_filename='industry_monthly_jobs.csv',
+            legacy_filename='行业月度数据.csv',
+        )
         
         logger.info("数据文件已保存")
     

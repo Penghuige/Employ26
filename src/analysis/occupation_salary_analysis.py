@@ -2,13 +2,12 @@
 职业/职业类别薪资分析模块。
 
 用途:
-- 基于 `output/integrated/*_整合_*.csv` 分析职业类别与职业核心词的薪资分布。
-- 同时生成月度趋势、学历交叉统计、文本报告、CSV 明细和 HTML 图表。
+- 基于 PostgreSQL `public.recruitment_jobs_normalized` + 职业匹配结果层分析职业薪资分布。
+- 同时生成月度趋势、学历交叉统计、Markdown 报告、CSV 明细和 HTML 图表。
 - 这是当前目录里最核心的薪资分析脚本，优先级高于旧版 `salary_analysis.py`。
 
 前置依赖:
-- 先运行 `src/preprocessing/integrate_occupation.py`，确保整合数据里已经补齐
-  `occupation_core`、`occupation_category`、`publish_month`、`薪资水平` 等字段。
+- 先完成统一招聘规范层回填，并生成 `public.skill_extraction_requirement_matches` 职业匹配结果。
 
 关键输入字段:
 - `薪资水平`
@@ -18,27 +17,30 @@
 - `学历要求`
 
 输出文件:
-- `output/reports/职业类别薪资分析报告.txt`
-- `output/reports/职业类别月度薪资数据.csv`
-- `output/reports/职业月度薪资数据.csv`
-- `output/reports/学历职业类别薪资数据.csv`
-- `output/reports/学历职业薪资数据.csv`
+- `output/reports/职业类别薪资分析报告.md`
+- `output/reports/structured_analysis_{mm-dd}/salary_by_occupation_category_month.csv`
+- `output/reports/structured_analysis_{mm-dd}/salary_by_occupation_month.csv`
+- `output/reports/structured_analysis_{mm-dd}/salary_by_education_occupation_category.csv`
+- `output/reports/structured_analysis_{mm-dd}/salary_by_education_occupation.csv`
 - `output/reports/职业类别薪资分析图.html`
 
 运行方式:
 - `python -m src.analysis.occupation_salary_analysis`
-- 或 `python src/analysis/occupation_salary_analysis.py`
 
 维护说明:
-- 当前脚本使用的是新版整合数据口径，和目录中的 `generate_standardized_tables.py`
+- 当前脚本使用 PostgreSQL 结构化统计主输入，和目录中的 `generate_standardized_tables.py`
   `generate_excel_summary.py` 存在上下游关系，不属于重复实现。
 """
 
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import logging
 import re
+
+from pathlib import Path
+
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -82,7 +84,7 @@ def parse_salary(salary_str):
 class OccupationSalaryAnalyzer:
     """职业类别薪资分析器"""
     
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, output_dir=None):
         """初始化"""
         if base_dir is None:
             base_dir = Path(__file__).parent.parent.parent
@@ -90,23 +92,18 @@ class OccupationSalaryAnalyzer:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info("职业类别薪资分析器初始化完成")
     
     def load_data(self):
-        """加载整合后的数据"""
-        logger.info("加载数据...")
-        
-        all_data = []
-        for csv_file in self.data_dir.glob('*_整合_*.csv'):
-            logger.info(f"  读取: {csv_file.name}")
-            df = pd.read_csv(csv_file, encoding='utf-8')
-            all_data.append(df)
-        
-        df = pd.concat(all_data, ignore_index=True)
+        """加载 PostgreSQL 结构化统计主输入。"""
+        logger.info("从 PostgreSQL 加载结构化统计主输入...")
+
+        df = load_structured_analysis_dataframe()
         logger.info(f"总数据: {len(df):,} 行")
         
         # 解析薪资
@@ -290,43 +287,37 @@ class OccupationSalaryAnalyzer:
         """保存分析报告"""
         logger.info("\n保存分析报告...")
         
-        report_file = self.output_dir / '职业类别薪资分析报告.txt'
+        report_file = self.output_dir / '职业类别薪资分析报告.md'
         with open(report_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 80 + "\n")
-            f.write("广东省招聘数据 - 职业类别薪资分析报告\n")
-            f.write("=" * 80 + "\n\n")
+            f.write("# 广东省招聘数据 - 职业类别薪资分析报告\n\n")
             
-            f.write("一、职业类别薪资统计\n")
-            f.write("-" * 80 + "\n")
+            f.write("## 一、职业类别薪资统计\n\n")
             for category, row in category_stats.iterrows():
                 f.write(f"{category:20s} - 平均: {row['平均薪资']:10,.0f}元 | "
                        f"中位数: {row['中位数薪资']:10,.0f}元 | 岗位数: {int(row['岗位数量']):8,}\n")
             
-            f.write("\n\n二、职业核心词薪资排行 (Top 50)\n")
-            f.write("-" * 80 + "\n")
+            f.write("\n\n## 二、职业核心词薪资排行 (Top 50)\n\n")
             for i, (core, row) in enumerate(core_stats.head(50).iterrows(), 1):
                 f.write(f"{i:3d}. {core:30s} - 平均: {row['平均薪资']:10,.0f}元 | "
                        f"中位数: {row['中位数薪资']:10,.0f}元 | 岗位数: {int(row['岗位数量']):8,}\n")
             
             if edu_category_stats is not None:
-                f.write("\n\n三、学历×职业类别薪资分析\n")
-                f.write("-" * 80 + "\n")
+                f.write("\n\n## 三、学历×职业类别薪资分析\n\n")
                 for edu in ['博士', '硕士', '本科', '大专']:
                     edu_data = edu_category_stats[edu_category_stats['学历'] == edu]
                     if len(edu_data) > 0:
-                        f.write(f"\n{edu}:\n")
+                        f.write(f"\n### {edu}\n")
                         edu_data_sorted = edu_data.sort_values('平均薪资', ascending=False)
                         for _, row in edu_data_sorted.head(15).iterrows():
                             f.write(f"  {row['occupation_category']:20s} - 平均: {row['平均薪资']:10,.0f}元 | "
                                    f"岗位数: {int(row['岗位数量']):6,}\n")
             
             if edu_occupation_stats is not None:
-                f.write("\n\n四、学历×职业薪资分析（主口径）\n")
-                f.write("-" * 80 + "\n")
+                f.write("\n\n## 四、学历×职业薪资分析（主口径）\n\n")
                 for edu in ['博士', '硕士', '本科', '大专']:
                     edu_data = edu_occupation_stats[edu_occupation_stats['学历'] == edu]
                     if len(edu_data) > 0:
-                        f.write(f"\n{edu}:\n")
+                        f.write(f"\n### {edu}\n")
                         edu_data_sorted = edu_data.sort_values('平均薪资', ascending=False)
                         for _, row in edu_data_sorted.head(15).iterrows():
                             f.write(f"  {row['occupation_core']:30s} - 平均: {row['平均薪资']:10,.0f}元 | "
@@ -334,17 +325,45 @@ class OccupationSalaryAnalyzer:
         
         logger.info(f"报告已保存: {report_file}")
         
-        # 保存CSV数据
-        monthly_category_stats.to_csv(self.output_dir / '职业类别月度薪资数据.csv', 
-                            index=False, encoding='utf-8-sig')
-        monthly_occupation_stats.to_csv(self.output_dir / '职业月度薪资数据.csv',
-                            index=False, encoding='utf-8-sig')
+        # 保存 CSV 数据：英文规范列名为主，中文历史文件名兼容旧汇总脚本。
+        monthly_category_export = monthly_category_stats.rename(
+            columns={'平均薪资': 'avg_salary', '岗位数量': 'job_count'}
+        )
+        write_csv_with_legacy_copy(
+            monthly_category_export,
+            self.output_dir,
+            canonical_filename='salary_by_occupation_category_month.csv',
+            legacy_filename='职业类别月度薪资数据.csv',
+        )
+        monthly_occupation_export = monthly_occupation_stats.rename(
+            columns={'平均薪资': 'avg_salary', '岗位数量': 'job_count'}
+        )
+        write_csv_with_legacy_copy(
+            monthly_occupation_export,
+            self.output_dir,
+            canonical_filename='salary_by_occupation_month.csv',
+            legacy_filename='职业月度薪资数据.csv',
+        )
         if edu_category_stats is not None:
-            edu_category_stats.to_csv(self.output_dir / '学历职业类别薪资数据.csv',
-                                       index=False, encoding='utf-8-sig')
+            edu_category_export = edu_category_stats.rename(
+                columns={'学历': 'education_level', '平均薪资': 'avg_salary', '岗位数量': 'job_count'}
+            )
+            write_csv_with_legacy_copy(
+                edu_category_export,
+                self.output_dir,
+                canonical_filename='salary_by_education_occupation_category.csv',
+                legacy_filename='学历职业类别薪资数据.csv',
+            )
         if edu_occupation_stats is not None:
-            edu_occupation_stats.to_csv(self.output_dir / '学历职业薪资数据.csv',
-                                       index=False, encoding='utf-8-sig')
+            edu_occupation_export = edu_occupation_stats.rename(
+                columns={'学历': 'education_level', '平均薪资': 'avg_salary', '岗位数量': 'job_count'}
+            )
+            write_csv_with_legacy_copy(
+                edu_occupation_export,
+                self.output_dir,
+                canonical_filename='salary_by_education_occupation.csv',
+                legacy_filename='学历职业薪资数据.csv',
+            )
         
         logger.info("数据文件已保存")
     

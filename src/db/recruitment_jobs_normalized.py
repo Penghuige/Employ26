@@ -13,6 +13,8 @@ from src.db.postgres import create_pg_engine, ensure_schema
 
 
 DEFAULT_NORMALIZED_TABLE = "public.recruitment_jobs_normalized"
+DEFAULT_BACKFILL_LOCATOR_TABLE = "public.recruitment_jobs_normalized_backfill_locator"
+DEFAULT_BACKFILL_CHUNK_STATE_TABLE = "public.recruitment_jobs_normalized_backfill_chunks"
 
 
 def split_table_name(table_name: str) -> tuple[str, str]:
@@ -74,6 +76,11 @@ class RecruitmentNormalizedRow:
     work_city: str
     company_name: str
     publish_date: str
+    salary_raw: str
+    education_requirement_raw: str
+    experience_requirement_raw: str
+    company_size_raw: str
+    company_industry_raw: str
 
 
 def ensure_recruitment_jobs_normalized_table(
@@ -101,12 +108,32 @@ def ensure_recruitment_jobs_normalized_table(
                 work_city text,
                 company_name text,
                 publish_date text,
+                salary_raw text,
+                education_requirement_raw text,
+                experience_requirement_raw text,
+                company_size_raw text,
+                company_industry_raw text,
                 created_at timestamptz NOT NULL DEFAULT now(),
                 updated_at timestamptz NOT NULL DEFAULT now()
             )
             """
         )
     )
+    for column_name in (
+        "salary_raw",
+        "education_requirement_raw",
+        "experience_requirement_raw",
+        "company_size_raw",
+        "company_industry_raw",
+    ):
+        connection.execute(
+            text(
+                f"""
+                ALTER TABLE {qualified_table}
+                ADD COLUMN IF NOT EXISTS {column_name} text
+                """
+            )
+        )
     connection.execute(
         text(
             f"""
@@ -129,6 +156,79 @@ def ensure_recruitment_jobs_normalized_table(
             f"""
             CREATE INDEX IF NOT EXISTS idx_{object_prefix}_dedupe_fingerprint
             ON {qualified_table} (dedupe_fingerprint)
+            """
+        )
+    )
+
+
+def ensure_recruitment_jobs_normalized_backfill_runtime_tables(
+    connection,
+    *,
+    locator_table: str = DEFAULT_BACKFILL_LOCATOR_TABLE,
+    chunk_state_table: str = DEFAULT_BACKFILL_CHUNK_STATE_TABLE,
+) -> None:
+    """确保回填运行期 locator 与 chunk 状态表存在。"""
+    for table_name in (locator_table, chunk_state_table):
+        schema_name, _ = split_table_name(table_name)
+        ensure_schema(connection, schema_name)
+
+    qualified_locator = quote_table_name(locator_table)
+    locator_prefix = locator_table.replace('"', "").replace(".", "_").strip("_")
+    qualified_chunk_state = quote_table_name(chunk_state_table)
+    chunk_prefix = chunk_state_table.replace('"', "").replace(".", "_").strip("_")
+
+    connection.execute(
+        text(
+            f"""
+            CREATE UNLOGGED TABLE IF NOT EXISTS {qualified_locator} (
+                run_id text NOT NULL,
+                source_table text NOT NULL,
+                source_row_number bigint NOT NULL,
+                source_ctid tid NOT NULL,
+                chunk_id bigint NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (run_id, source_table, source_row_number)
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{locator_prefix}_chunk_lookup
+            ON {qualified_locator} (run_id, source_table, chunk_id)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {qualified_chunk_state} (
+                run_id text NOT NULL,
+                source_table text NOT NULL,
+                chunk_id bigint NOT NULL,
+                range_start bigint NOT NULL,
+                range_end bigint NOT NULL,
+                planned_rows bigint NOT NULL,
+                attempt integer NOT NULL DEFAULT 0,
+                status text NOT NULL,
+                started_at timestamptz,
+                finished_at timestamptz,
+                duration_seconds double precision,
+                written_rows bigint NOT NULL DEFAULT 0,
+                error_message text NOT NULL DEFAULT '',
+                created_at timestamptz NOT NULL DEFAULT now(),
+                updated_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (run_id, source_table, chunk_id)
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{chunk_prefix}_status_lookup
+            ON {qualified_chunk_state} (run_id, status)
             """
         )
     )
@@ -157,6 +257,11 @@ def build_normalized_rows_from_dataframe(
     company_col: str = "公司名称",
     publish_col: str = "发布时间",
     native_job_id_col: str = "job_id",
+    salary_col: str = "薪资水平",
+    education_col: str = "学历要求",
+    experience_col: str = "经验要求",
+    company_size_col: str = "公司规模",
+    company_industry_col: str = "公司行业",
 ) -> list[RecruitmentNormalizedRow]:
     """将原始招聘记录 DataFrame 转成统一规范层写入行。"""
     platform = source_platform or infer_source_platform(source_table)
@@ -169,6 +274,11 @@ def build_normalized_rows_from_dataframe(
         work_city = safe_text(row.get(city_col, ""))
         company_name = safe_text(row.get(company_col, ""))
         publish_date = safe_text(row.get(publish_col, ""))
+        salary_raw = safe_text(row.get(salary_col, ""))
+        education_requirement_raw = safe_text(row.get(education_col, ""))
+        experience_requirement_raw = safe_text(row.get(experience_col, ""))
+        company_size_raw = safe_text(row.get(company_size_col, ""))
+        company_industry_raw = safe_text(row.get(company_industry_col, ""))
         rows.append(
             RecruitmentNormalizedRow(
                 source_platform=platform,
@@ -188,12 +298,38 @@ def build_normalized_rows_from_dataframe(
                 work_city=work_city,
                 company_name=company_name,
                 publish_date=publish_date,
+                salary_raw=salary_raw,
+                education_requirement_raw=education_requirement_raw,
+                experience_requirement_raw=experience_requirement_raw,
+                company_size_raw=company_size_raw,
+                company_industry_raw=company_industry_raw,
             )
         )
     return rows
 
 
-def _find_existing_record_id(connection, table_name: str, row: RecruitmentNormalizedRow) -> str | None:
+def _find_existing_record_id_by_source_locator(connection, table_name: str, row: RecruitmentNormalizedRow) -> str | None:
+    """按来源定位键查找已存在的招聘记录身份。"""
+    qualified_table = quote_table_name(table_name)
+    existing = connection.execute(
+        text(
+            f"""
+            SELECT recruitment_record_id
+            FROM {qualified_table}
+            WHERE source_table = :source_table
+              AND source_row_number = :source_row_number
+            LIMIT 1
+            """
+        ),
+        {
+            "source_table": row.source_table,
+            "source_row_number": row.source_row_number,
+        },
+    ).scalar_one_or_none()
+    return str(existing) if existing else None
+
+
+def _find_existing_record_id_by_entity_match(connection, table_name: str, row: RecruitmentNormalizedRow) -> str | None:
     """按原生岗位 ID 或去重指纹查找已存在的招聘记录身份。"""
     qualified_table = quote_table_name(table_name)
     if row.source_native_job_id:
@@ -232,6 +368,7 @@ def _find_existing_record_id(connection, table_name: str, row: RecruitmentNormal
 def upsert_recruitment_jobs_normalized(
     rows: list[RecruitmentNormalizedRow],
     table_name: str = DEFAULT_NORMALIZED_TABLE,
+    reuse_existing_identity: bool = False,
 ) -> int:
     """增量 upsert 统一规范层记录，并冻结 recruitment_record_id。"""
     if not rows:
@@ -242,7 +379,10 @@ def upsert_recruitment_jobs_normalized(
     with engine.begin() as connection:
         ensure_recruitment_jobs_normalized_table(connection, table_name=table_name)
         for row in rows:
-            recruitment_record_id = _find_existing_record_id(connection, table_name, row) or str(uuid.uuid4())
+            recruitment_record_id = _find_existing_record_id_by_source_locator(connection, table_name, row)
+            if recruitment_record_id is None and reuse_existing_identity:
+                recruitment_record_id = _find_existing_record_id_by_entity_match(connection, table_name, row)
+            recruitment_record_id = recruitment_record_id or str(uuid.uuid4())
             connection.execute(
                 text(
                     f"""
@@ -257,7 +397,12 @@ def upsert_recruitment_jobs_normalized(
                         job_description_raw,
                         work_city,
                         company_name,
-                        publish_date
+                        publish_date,
+                        salary_raw,
+                        education_requirement_raw,
+                        experience_requirement_raw,
+                        company_size_raw,
+                        company_industry_raw
                     )
                     VALUES (
                         :recruitment_record_id,
@@ -270,7 +415,12 @@ def upsert_recruitment_jobs_normalized(
                         :job_description_raw,
                         :work_city,
                         :company_name,
-                        :publish_date
+                        :publish_date,
+                        :salary_raw,
+                        :education_requirement_raw,
+                        :experience_requirement_raw,
+                        :company_size_raw,
+                        :company_industry_raw
                     )
                     ON CONFLICT (recruitment_record_id)
                     DO UPDATE SET
@@ -284,6 +434,11 @@ def upsert_recruitment_jobs_normalized(
                         work_city = EXCLUDED.work_city,
                         company_name = EXCLUDED.company_name,
                         publish_date = EXCLUDED.publish_date,
+                        salary_raw = EXCLUDED.salary_raw,
+                        education_requirement_raw = EXCLUDED.education_requirement_raw,
+                        experience_requirement_raw = EXCLUDED.experience_requirement_raw,
+                        company_size_raw = EXCLUDED.company_size_raw,
+                        company_industry_raw = EXCLUDED.company_industry_raw,
                         updated_at = now()
                     """
                 ),
@@ -299,6 +454,11 @@ def upsert_recruitment_jobs_normalized(
                     "work_city": row.work_city,
                     "company_name": row.company_name,
                     "publish_date": row.publish_date,
+                    "salary_raw": row.salary_raw,
+                    "education_requirement_raw": row.education_requirement_raw,
+                    "experience_requirement_raw": row.experience_requirement_raw,
+                    "company_size_raw": row.company_size_raw,
+                    "company_industry_raw": row.company_industry_raw,
                 },
             )
     return len(rows)

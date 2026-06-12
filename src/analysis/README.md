@@ -1,47 +1,163 @@
 # `src/analysis` 目录说明
 
-这个目录现在同时包含两套分析思路:
+当前 `src/analysis` 分成两条链路：
 
-- 主链路: 基于 `output/integrated/*_整合_*.csv` 的标准化分析脚本，适合当前项目继续维护。
-- 旧链路: 基于 `output/nlp_processed/*.csv` 的早期关键词分析脚本，现已归档，不再作为活跃模块维护。
+- 结构化统计主链路：直接读取 PostgreSQL `public.recruitment_jobs_normalized` 和 `public.skill_extraction_requirement_matches`，再导出常规统计报表。
+- requirement text 第二阶段链路：直接读取 PostgreSQL `public.recruitment_jobs_normalized` 和 `public.job_description_parsed`，将 requirement text 抽取成可复用的约束事实层，再导出正式统计产物。
 
-## 推荐执行顺序
+两条链路共用以下基础约定：
 
-1. 先运行 [`occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py)，生成 `output/integrated`。
-2. 再运行 [`occupation_salary_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/occupation_salary_analysis.py)。
-3. 再运行 [`education_distribution_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/education_distribution_analysis.py)。
-4. 再运行 [`industry_trend_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/industry_trend_analysis.py)。
-5. 如需规范交付表，再运行 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)。
-6. 如需最终汇总 Excel，再运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)。
+- 统一基础表：`public.recruitment_jobs_normalized`
+- 统一轻量标准化字段：`publish_month`、`city_normalized`、`industry_normalized`、`company_size_normalized`
+- 统一批次目录模式：`output/reports/{workflow}_{mm-dd}/`
+- 统一运行清单：`run_manifest.json`
+- 统一报告格式：Markdown
 
-## 脚本状态
+## 当前推荐入口
 
-| 脚本 | 数据来源 | 主要产物 | 状态 | 说明 |
-| --- | --- | --- | --- | --- |
-| `occupation_salary_analysis.py` | `output/integrated` | 薪资报告、CSV、HTML | 主链路 | 当前最完整的薪资分析入口 |
-| `education_distribution_analysis.py` | `output/integrated` | 学历分布 CSV、TXT | 主链路 | 与职业/职业类别标准化字段直接配套 |
-| `industry_trend_analysis.py` | `output/integrated` | 行业趋势 CSV、TXT、HTML | 主链路 | 直接消费 `city_clean`、`industry_clean` |
-| `generate_standardized_tables.py` | `output/reports` + `output/integrated` | 规范化 CSV | 二次汇总 | 负责统一交付列名 |
-| `generate_excel_summary.py` | `output/reports` | 汇总 Excel | 二次汇总 | 汇总多个分析结果，不直接做原始分析 |
-| 已归档旧链路脚本 | `output/nlp_processed` | 历史文本/图表 | 已归档 | 不再保留在活跃 `src/analysis/` 中 |
+优先使用统一 CLI：
 
-## 与 `src` 其他目录对比后的结论
+```bash
+python -m src.analysis.cli structured run --with-excel
+python -m src.analysis.cli requirements run
+```
 
-### 1. 不重复、且仍然值得保留的部分
+两条链路都支持 `--output-dir` 显式指定本次批次输出目录。
 
-- `analysis` 主链路脚本和 [`src/data_pipeline/occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py) 是上下游关系，不是重复关系。
-- `analysis` 和 [`src/skill_extraction/occupation_skill_pipeline.py`](/d:/PythonProjects/Employ26/src/skill_extraction/occupation_skill_pipeline.py) 也不重复。
-  `skill_extraction` 做的是职业技能词典构建与覆盖率评估，`analysis` 做的是招聘数据统计报表。
-- `generate_standardized_tables.py`、`generate_excel_summary.py` 虽然不“分析”原始数据，但负责交付层整理，仍然有价值。
+### 1. 结构化统计主链路
 
-### 2. 有明显重叠或偏旧的部分
+推荐命令：
 
-- 旧版 `salary_analysis.py`、`skill_combination.py`、`time_trend_analysis.py` 已归档或已从活跃目录移除。
-- [`src/utils/analyze_results.py`](/d:/PythonProjects/Employ26/src/utils/analyze_results.py) 与旧版关键词/NLP 统计链路重叠，属于待归档历史工具。
-- [`src/visualization/wordcloud_generator.py`](/d:/PythonProjects/Employ26/src/visualization/wordcloud_generator.py) 同样依赖 `output/nlp_processed`，属于待归档历史可视化工具。
+```bash
+python -m src.analysis.cli structured run
+```
 
-### 3. 当前最需要注意的技术债
+常用选项：
 
-- `parse_salary` 在 `occupation_salary_analysis.py`、`generate_standardized_tables.py` 中仍有重复实现，后续可考虑抽到公共工具模块。
-- 旧链路脚本里的技能集合多为硬编码，无法自动复用 `skill_extraction` 目录下的新词典成果。
-- 如果后续要恢复旧链路脚本，更稳妥的方向是迁移到 `output/integrated` 口径，而不是继续叠加旧逻辑。
+- `--with-excel`：最后运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)
+- `--skip-standardized`：跳过 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)
+- `--output-dir`：显式指定结构化统计批次输出目录
+
+主输入：
+
+- `public.recruitment_jobs_normalized`：招聘记录统一规范层
+- `public.skill_extraction_requirement_matches`：职业匹配结果层，按 `recruitment_record_id` 回连招聘记录
+
+单脚本调试顺序：
+
+1. 先确保 [`backfill_recruitment_jobs_normalized.py`](/d:/PythonProjects/Employ26/src/data_pipeline/backfill_recruitment_jobs_normalized.py) 已回填统一规范层
+2. 再确保 [`requirement_match_prep.py`](/d:/PythonProjects/Employ26/src/data_pipeline/requirement_match_prep.py) 已写入职业匹配结果层
+3. 再运行 [`occupation_salary_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/occupation_salary_analysis.py)
+4. 再运行 [`education_distribution_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/education_distribution_analysis.py)
+5. 再运行 [`industry_trend_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/industry_trend_analysis.py)
+6. 如需交付层汇总，再运行 [`generate_standardized_tables.py`](/d:/PythonProjects/Employ26/src/analysis/generate_standardized_tables.py)
+7. 如需最终汇总 Excel，再运行 [`generate_excel_summary.py`](/d:/PythonProjects/Employ26/src/analysis/generate_excel_summary.py)
+
+### 2. requirement text 统计链路
+
+推荐命令：
+
+```bash
+python -m src.analysis.cli requirements run
+```
+
+常用选项：
+
+- `--output-dir`：显式指定 requirement text 批次输出目录
+
+单脚本调试入口：
+
+- [`requirement_text_analysis.py`](/d:/PythonProjects/Employ26/src/analysis/requirement_text_analysis.py)
+
+依赖前置：
+
+1. `public.recruitment_jobs_normalized` 已完成 sample 回填
+2. `public.job_description_parsed` 已有岗位描述解析结果
+3. `analysis_lexicon` schema 已建好，并存在唯一 `is_current = true` 的正式 release
+
+相关脚本：
+
+- [`backfill_recruitment_jobs_normalized.py`](/d:/PythonProjects/Employ26/src/data_pipeline/backfill_recruitment_jobs_normalized.py)
+- [`analysis_lexicon.py`](/d:/PythonProjects/Employ26/src/db/analysis_lexicon.py)
+
+## requirement text 第二阶段的正式口径
+
+- 主输入：`public.recruitment_jobs_normalized` + `public.job_description_parsed`
+- 主样本：`requirements_text` 非空的招聘记录
+- 正式中间层：`public.requirement_constraint_facts`
+- 主逻辑：`切分 -> 规范化 -> 约束抽取 -> 写入 PostgreSQL -> 聚合报表`
+- 词汇资源：只读取 PostgreSQL `analysis_lexicon` 当前正式 release
+- 规则资源：`analysis_lexicon.requirement_rules`
+- 历史兼容：若 `job_description_parsed` 仍保留 `__source_table` / `__source_row_number` 旧字段，链路会自动映射后再与规范层回连
+
+当前边界：
+
+- `hard skill` 与 `soft skill` 相关词项暂只保留为探索性 hint，不作为当前正式研究结论
+- 当前可正式使用的是 requirement 约束、模板噪声与招聘门槛强度统计，不是“稳定技能分类”统计
+- 后续若要正式发布技能分类口径，需要单独补做更细的词典治理、歧义审查与标注验证
+
+## 输出目录与文件
+
+默认输出目录：
+
+- 结构化统计：`output/reports/structured_analysis_{mm-dd}/`
+- requirement text：`output/reports/req_analysis_{mm-dd}/`
+
+固定产物：
+
+- `run_manifest.json`
+- `coverage_diagnostics.csv`
+- `lexicon_summary.csv`
+- `constraint_dimension_frequency.csv`
+- `constraint_value_distribution.csv`
+- `constraint_by_city_industry.csv`
+- `template_noise_report.csv`
+- `requirement_stringency_index.csv`
+- `report.md`
+
+命令示例：
+
+```bash
+python -m src.db.analysis_lexicon --ensure-schema
+python -m src.db.analysis_lexicon --bootstrap-v1 --version v2_curated_requirement_analysis
+python -m src.db.requirement_constraint_facts --ensure-schema
+python -m src.data_pipeline.backfill_recruitment_jobs_normalized
+python -m src.analysis.cli requirements run
+```
+
+结构化统计主链路的 Markdown 报告产物：
+
+- `output/reports/structured_analysis_{mm-dd}/职业类别薪资分析报告.md`
+- `output/reports/structured_analysis_{mm-dd}/学历需求分布分析报告.md`
+- `output/reports/structured_analysis_{mm-dd}/行业景气度分析报告.md`
+- `output/reports/structured_analysis_{mm-dd}/结构化维度补充分析报告.md`
+
+新增规范 CSV 产物示例：
+
+- `salary_by_occupation_month.csv`
+- `salary_by_education_occupation.csv`
+- `education_by_occupation_month.csv`
+- `industry_monthly_jobs.csv`
+- `experience_by_occupation.csv`
+- `company_size_by_city_industry.csv`
+- `city_occupation_demand.csv`
+
+## 职业词典四表的当前建议
+
+当前职业词典已经收敛到统一入口：
+
+- `public.occ_dict_unified`：统一职业词典主表，包含职业叶子节点与分类骨架节点
+- `public.occ_dict`：兼容 view
+- `public.occ_dict_detailed`：兼容 view
+- `public.occ_dict_pro`：兼容 view
+- `public.occ_dict_class`：兼容 view
+
+当前推荐：
+
+- 职业匹配、检索、预处理默认读 `public.occ_dict_unified`
+- 如需兼容旧脚本，可继续读 `public.occ_dict_detailed` / `public.occ_dict_pro`
+- 分类骨架回查可读 `public.occ_dict_class`
+
+## 历史 CSV 适配器说明
+
+[`occupation_integration.py`](/d:/PythonProjects/Employ26/src/data_pipeline/occupation_integration.py) 只保留为历史兼容适配器，用于读取旧的职业解析 CSV 并生成 `output/integrated`。当前结构化统计主链路不再依赖它；如需新增统计字段，应优先补到 PostgreSQL 规范层或职业匹配/事实结果层，再由 [`structured_pg_source.py`](/d:/PythonProjects/Employ26/src/analysis/structured_pg_source.py) 暴露给分析脚本。

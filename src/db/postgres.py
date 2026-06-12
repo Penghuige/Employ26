@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
@@ -10,6 +12,31 @@ from config.paths import get_project_paths
 PROJECT_PATHS = get_project_paths()
 
 
+def build_pg_engine_options(
+    *,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+    pool_recycle: int | None = None,
+    pool_pre_ping: bool = True,
+    application_name: str | None = None,
+) -> dict[str, object]:
+    """构建 SQLAlchemy PostgreSQL engine 参数。"""
+    options: dict[str, object] = {
+        "future": True,
+        "pool_pre_ping": bool(pool_pre_ping),
+    }
+    if pool_size is not None:
+        options["pool_size"] = int(pool_size)
+    if max_overflow is not None:
+        options["max_overflow"] = int(max_overflow)
+    if pool_recycle is not None:
+        options["pool_recycle"] = int(pool_recycle)
+    if application_name:
+        options["connect_args"] = {"application_name": str(application_name)}
+    return options
+
+
+@lru_cache(maxsize=8)
 def resolve_pg_dbname(preferred: str | None = None) -> str:
     """解析当前机器上真实可连接的 PostgreSQL 数据库名。"""
     configured = str(preferred or PROJECT_PATHS.pg_connection_params["dbname"])
@@ -55,10 +82,27 @@ def resolve_pg_dbname(preferred: str | None = None) -> str:
     )
 
 
-def create_pg_engine(dbname: str | None = None):
+def create_pg_engine(
+    dbname: str | None = None,
+    *,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+    pool_recycle: int | None = None,
+    pool_pre_ping: bool = True,
+    application_name: str | None = None,
+):
     """创建 PostgreSQL SQLAlchemy engine。"""
     target_db = dbname or resolve_pg_dbname()
-    return create_engine(PROJECT_PATHS.pg_sqlalchemy_url(target_db), future=True)
+    return create_engine(
+        PROJECT_PATHS.pg_sqlalchemy_url(target_db),
+        **build_pg_engine_options(
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_recycle=pool_recycle,
+            pool_pre_ping=pool_pre_ping,
+            application_name=application_name,
+        ),
+    )
 
 
 def ensure_schema(connection, schema_name: str) -> None:

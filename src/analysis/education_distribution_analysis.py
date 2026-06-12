@@ -4,12 +4,11 @@
 学历需求分布分析模块。
 
 用途:
-- 基于 `output/integrated/*_整合_*.csv` 统计职业类别/职业在年度、月度两个时间尺度上的学历分布。
+- 基于 PostgreSQL `public.recruitment_jobs_normalized` + 职业匹配结果层统计学历分布。
 - 适合和 `occupation_salary_analysis.py`、`industry_trend_analysis.py` 搭配，作为当前目录中的主分析链路之一。
 
 前置依赖:
-- 先运行 `src/preprocessing/integrate_occupation.py`，确保整合数据里已经有
-  `occupation_core`、`occupation_category`、`publish_month` 等标准化字段。
+- 先完成统一招聘规范层回填，并生成 `public.skill_extraction_requirement_matches` 职业匹配结果。
 
 关键输入字段:
 - `学历要求`
@@ -18,23 +17,26 @@
 - `occupation_category`
 
 输出文件:
-- `output/reports/职业类别年度学历分布.csv`
-- `output/reports/职业年度学历分布.csv`
-- `output/reports/职业类别月度学历分布.csv`
-- `output/reports/职业月度学历分布.csv`
-- `output/reports/学历需求分布分析报告.txt`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_category_year.csv`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_year.csv`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_category_month.csv`
+- `output/reports/structured_analysis_{mm-dd}/education_by_occupation_month.csv`
+- `output/reports/学历需求分布分析报告.md`
 
 运行方式:
 - `python -m src.analysis.education_distribution_analysis`
-- 或 `python src/analysis/education_distribution_analysis.py`
 
 维护说明:
-- 当前脚本使用的是较新的 `output/integrated` 数据口径，不属于旧版关键词分析脚本。
+- 当前脚本使用 PostgreSQL 结构化统计主输入，不属于旧版关键词分析脚本。
 """
 
-import pandas as pd
-from pathlib import Path
 import logging
+from pathlib import Path
+
+import pandas as pd
+
+from src.analysis.structured_common import build_structured_output_dir, write_csv_with_legacy_copy
+from src.analysis.structured_pg_source import load_structured_analysis_dataframe
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -43,12 +45,13 @@ logger = logging.getLogger(__name__)
 class EducationDistributionAnalyzer:
     """学历需求分布分析器"""
     
-    def __init__(self, base_dir=None, min_jobs_monthly=5):
+    def __init__(self, base_dir=None, min_jobs_monthly=5, output_dir=None):
         """初始化
         
         Args:
             base_dir: 项目根目录
             min_jobs_monthly: 月度职业层面最小岗位数阈值（默认5）
+            output_dir: 可选输出目录
         """
         if base_dir is None:
             base_dir = Path(__file__).parent.parent.parent
@@ -56,8 +59,9 @@ class EducationDistributionAnalyzer:
             base_dir = Path(base_dir)
         
         self.base_dir = base_dir
-        self.data_dir = base_dir / 'output' / 'integrated'
-        self.output_dir = base_dir / 'output' / 'reports'
+        self.output_dir = Path(output_dir) if output_dir is not None else build_structured_output_dir(
+            base_output_dir=base_dir / 'output' / 'reports'
+        )
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.min_jobs_monthly = min_jobs_monthly
@@ -105,16 +109,10 @@ class EducationDistributionAnalyzer:
         return str(month_str)[:4]
     
     def load_data(self):
-        """加载整合后的数据"""
-        logger.info("加载数据...")
-        
-        all_data = []
-        for csv_file in self.data_dir.glob('*_整合_*.csv'):
-            logger.info(f"  读取: {csv_file.name}")
-            df = pd.read_csv(csv_file, encoding='utf-8')
-            all_data.append(df)
-        
-        df = pd.concat(all_data, ignore_index=True)
+        """加载 PostgreSQL 结构化统计主输入。"""
+        logger.info("从 PostgreSQL 加载结构化统计主输入...")
+
+        df = load_structured_analysis_dataframe()
         logger.info(f"总数据: {len(df):,} 行")
         
         # 标准化学历
@@ -291,28 +289,53 @@ class EducationDistributionAnalyzer:
         """保存分析报告"""
         logger.info("\n保存分析报告...")
         
-        # 保存CSV文件
-        df_cat_year.to_csv(self.output_dir / '职业类别年度学历分布.csv', 
-                          index=False, encoding='utf-8-sig')
-        df_occ_year.to_csv(self.output_dir / '职业年度学历分布.csv',
-                          index=False, encoding='utf-8-sig')
-        df_cat_month.to_csv(self.output_dir / '职业类别月度学历分布.csv',
-                           index=False, encoding='utf-8-sig')
-        df_occ_month.to_csv(self.output_dir / '职业月度学历分布.csv',
-                           index=False, encoding='utf-8-sig')
+        # 保存 CSV 文件：英文规范列名为主，中文历史文件名兼容旧汇总脚本。
+        category_year_export = df_cat_year.rename(
+            columns={'年度': 'year', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            category_year_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_category_year.csv',
+            legacy_filename='职业类别年度学历分布.csv',
+        )
+        occupation_year_export = df_occ_year.rename(
+            columns={'年度': 'year', '职业': 'occupation_core', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            occupation_year_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_year.csv',
+            legacy_filename='职业年度学历分布.csv',
+        )
+        category_month_export = df_cat_month.rename(
+            columns={'月度': 'publish_month', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            category_month_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_category_month.csv',
+            legacy_filename='职业类别月度学历分布.csv',
+        )
+        occupation_month_export = df_occ_month.rename(
+            columns={'月度': 'publish_month', '职业': 'occupation_core', '职业类别': 'occupation_category', '学历': 'education_level', '岗位数量': 'job_count', '占比': 'share'}
+        )
+        write_csv_with_legacy_copy(
+            occupation_month_export,
+            self.output_dir,
+            canonical_filename='education_by_occupation_month.csv',
+            legacy_filename='职业月度学历分布.csv',
+        )
         
         logger.info("  ✅ CSV文件已保存")
         
-        # 生成文本报告
-        report_file = self.output_dir / '学历需求分布分析报告.txt'
+        # 生成 Markdown 报告
+        report_file = self.output_dir / '学历需求分布分析报告.md'
         with open(report_file, 'w', encoding='utf-8') as f:
-            f.write("=" * 80 + "\n")
-            f.write("广东省招聘数据 - 学历需求分布分析报告\n")
-            f.write("=" * 80 + "\n\n")
+            f.write("# 广东省招聘数据 - 学历需求分布分析报告\n\n")
             
             # 一、职业类别年度学历分布
-            f.write("一、职业类别年度学历分布\n")
-            f.write("-" * 80 + "\n\n")
+            f.write("## 一、职业类别年度学历分布\n\n")
             
             for year in sorted(df_cat_year['年度'].unique()):
                 f.write(f"【{year}年】\n")
@@ -328,8 +351,7 @@ class EducationDistributionAnalyzer:
                 f.write("\n")
             
             # 二、职业年度学历分布（Top 20职业）
-            f.write("\n二、职业年度学历分布（Top 20职业示例）\n")
-            f.write("-" * 80 + "\n\n")
+            f.write("\n## 二、职业年度学历分布（Top 20职业示例）\n\n")
             
             # 统计各职业总岗位数
             top_occupations = df_occ_year.groupby('职业')['岗位数量'].sum().nlargest(20).index
@@ -353,8 +375,7 @@ class EducationDistributionAnalyzer:
                 f.write("\n")
             
             # 三、学历需求趋势分析
-            f.write("\n三、学历需求趋势分析（按职业类别）\n")
-            f.write("-" * 80 + "\n\n")
+            f.write("\n## 三、学历需求趋势分析（按职业类别）\n\n")
             
             for category in df_cat_year['职业类别'].unique():
                 f.write(f"【{category}】\n")
@@ -372,8 +393,7 @@ class EducationDistributionAnalyzer:
                 f.write("\n")
             
             # 四、数据说明
-            f.write("\n四、数据说明\n")
-            f.write("-" * 80 + "\n")
+            f.write("\n## 四、数据说明\n\n")
             f.write(f"1. 职业类别年度学历分布: {len(df_cat_year):,} 个数据点\n")
             f.write(f"2. 职业年度学历分布: {len(df_occ_year):,} 个数据点\n")
             f.write(f"3. 职业类别月度学历分布: {len(df_cat_month):,} 个数据点\n")
@@ -388,7 +408,7 @@ class EducationDistributionAnalyzer:
             f.write("   - 明确学历: 博士、硕士、本科、大专、高中、中专\n")
             f.write("   - 其他: 学历不限、未明确\n")
         
-        logger.info(f"  ✅ 文本报告已保存: {report_file}")
+        logger.info(f"  ✅ Markdown报告已保存: {report_file}")
     
     def run(self):
         """运行完整分析"""
@@ -412,11 +432,11 @@ class EducationDistributionAnalyzer:
         logger.info("✅ 学历需求分布分析完成!")
         logger.info("=" * 80)
         logger.info("\n生成的文件:")
-        logger.info("  - output/reports/职业类别年度学历分布.csv")
-        logger.info("  - output/reports/职业年度学历分布.csv")
-        logger.info("  - output/reports/职业类别月度学历分布.csv")
-        logger.info("  - output/reports/职业月度学历分布.csv")
-        logger.info("  - output/reports/学历需求分布分析报告.txt")
+        logger.info("  - education_by_occupation_category_year.csv")
+        logger.info("  - education_by_occupation_year.csv")
+        logger.info("  - education_by_occupation_category_month.csv")
+        logger.info("  - education_by_occupation_month.csv")
+        logger.info("  - output/reports/学历需求分布分析报告.md")
 
 
 def main():
