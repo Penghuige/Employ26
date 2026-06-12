@@ -279,3 +279,26 @@ python -m src.skill_extraction.skill_dictionary_workflow baseline
 python -m src.skill_extraction.skill_dictionary_workflow run
 python -m src.skill_extraction.skill_dictionary_workflow status
 ```
+
+## 软技能迭代框架
+
+词典版本化 + 评估注册表 + CLI。每次改进创建新版本词典，运行评估，对比指标。
+
+```bash
+# 查看当前版本
+cat dicts/soft_skill/current.txt
+
+# 创建新版本
+cp dicts/soft_skill/v1.json dicts/soft_skill/v2.json
+# 编辑 v2.json ...
+echo "v2" > dicts/soft_skill/current.txt
+
+# 运行评估
+python -m src.skill_extraction.eval_cli run
+
+# 对比版本
+python -m src.skill_extraction.eval_cli compare v1 v2
+
+# 列出所有评估记录
+python -m src.skill_extraction.eval_cli list
+```
