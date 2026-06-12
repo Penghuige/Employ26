@@ -516,7 +516,8 @@ def evaluate_soft_skills(
                                 s
                                 for s in gold_skills
                                 if _normalize_skill_name(s["name"]) in missing
-                            ]
+                            ],
+                            key=lambda x: x["name"],
                         ),
                         ensure_ascii=False,
                     ),

@@ -32,6 +32,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ._dict_paths import get_current_soft_skill_dict_path
+
 logger = logging.getLogger(__name__)
 
 # 大五维度的中文名称映射
@@ -394,7 +396,14 @@ def main() -> None:
     args = parser.parse_args()
 
     paths = get_project_paths()
-    output_path = Path(args.output) if args.output else paths.project_root / "dicts" / "soft_skill_dictionary.json"
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        # 默认输出到版本化词典路径；若 current.txt 不存在，兜底使用旧路径
+        try:
+            output_path = get_current_soft_skill_dict_path()
+        except (FileNotFoundError, ImportError):
+            output_path = paths.project_root / "dicts" / "soft_skill_dictionary.json"
 
     # 获取种子词
     from src.skill_extraction.soft_skill_seed_extractor import extract_soft_skill_seeds

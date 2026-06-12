@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 from config.paths import get_project_paths
+from ._dict_paths import get_current_soft_skill_dict_path
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +73,10 @@ class SoftSkillMatcher:
         paths = get_project_paths()
         project_root = paths.project_root
 
-        self._soft_skill_dict_path = (
-            soft_skill_dict_path or project_root / "dicts" / "soft_skill_dictionary.json"
-        )
+        if soft_skill_dict_path is None:
+            self._soft_skill_dict_path = get_current_soft_skill_dict_path()
+        else:
+            self._soft_skill_dict_path = soft_skill_dict_path
         self._hard_skill_dict_path = (
             hard_skill_dict_path or project_root / "dicts" / "flat_skill_dictionary.json"
         )
