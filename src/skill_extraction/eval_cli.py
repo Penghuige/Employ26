@@ -61,7 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("run", help="run eval and write registry")
+    run_parser = sub.add_parser("run", help="run eval and write registry")
+    run_parser.add_argument("--use-llm", action="store_true", help="enable LLM soft skill validation")
     cmp_parser = sub.add_parser("compare", help="compare two versions")
     cmp_parser.add_argument("version_a")
     cmp_parser.add_argument("version_b")
@@ -74,6 +75,7 @@ def cmd_run(
     eval_dir: Optional[Path] = None,
     hard_dataset: Optional[Path] = None,
     soft_dataset: Optional[Path] = None,
+    use_llm: bool = False,
 ) -> None:
     """运行评估并将结果写入注册表。
 
@@ -81,6 +83,7 @@ def cmd_run(
         eval_dir: 评估输出目录。
         hard_dataset: 硬技能 gold dataset 路径。
         soft_dataset: 软技能 gold dataset 路径。
+        use_llm: 是否启用 LLM 软技能验证。
     """
     from ._dict_paths import get_current_soft_skill_dict_path
     from ._eval_registry import append_eval_record
@@ -110,13 +113,20 @@ def cmd_run(
     hard_matcher = FlatHardSkillMatcher(hard_dict)
     soft_matcher = SoftSkillMatcher()
 
+    llm_client = None
+    if use_llm:
+        from src.model_platform.llm import create_llm_client
+
+        llm_client = create_llm_client(backend="external_api")
+        logger.info("已启用 LLM 软技能验证")
+
     version_report_dir = registry_dir / version
     report = evaluate(
         hard_samples=hard_samples,
         soft_samples=soft_samples,
         hard_matcher=hard_matcher,
         soft_matcher=soft_matcher,
-        llm_client=None,
+        llm_client=llm_client,
         output_dir=version_report_dir,
     )
 
@@ -238,7 +248,7 @@ def main() -> None:
     if args.command == "list":
         cmd_list()
     elif args.command == "run":
-        cmd_run()
+        cmd_run(use_llm=getattr(args, "use_llm", False))
     elif args.command == "compare":
         cmd_compare(args.version_a, args.version_b)
     else:
