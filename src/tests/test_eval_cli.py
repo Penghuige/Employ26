@@ -55,3 +55,55 @@ class TestCmdList:
         cmd_list(tmp_path)
         captured = capsys.readouterr()
         assert "no eval" in captured.out.lower() or "评估" in captured.out
+
+
+class TestCmdRun:
+    def test_run_creates_registry_record(self, tmp_path, monkeypatch):
+        import json
+        from src.skill_extraction.eval_cli import cmd_run
+
+        gold_dir = tmp_path / "gold"
+        gold_dir.mkdir()
+        hard_data = [
+            {
+                "sample_id": "test_1",
+                "text": "use Java and MySQL",
+                "gold_skills": ["Java", "MySQL"],
+                "gold_categories": {"Java": "programming_language"},
+            }
+        ]
+        soft_data = [
+            {
+                "sample_id": "test_1",
+                "text": "have communication skills and responsibility",
+                "gold_soft_skills": [
+                    {"name": "communication", "dimension": "extraversion"},
+                    {"name": "responsibility", "dimension": "conscientiousness"},
+                ],
+            }
+        ]
+        (gold_dir / "hard.jsonl").write_text(
+            "\n".join(json.dumps(d, ensure_ascii=False) for d in hard_data)
+        )
+        (gold_dir / "soft.jsonl").write_text(
+            "\n".join(json.dumps(d, ensure_ascii=False) for d in soft_data)
+        )
+
+        eval_dir = tmp_path / "eval"
+        cmd_run(
+            eval_dir=eval_dir,
+            hard_dataset=gold_dir / "hard.jsonl",
+            soft_dataset=gold_dir / "soft.jsonl",
+        )
+
+        with open(eval_dir / "registry.json", "r", encoding="utf-8") as f:
+            registry = json.load(f)
+        assert len(registry["evaluations"]) == 1
+        record = registry["evaluations"][0]
+        assert record["dict_version"] == "v1"
+        assert "soft_skill_metrics" in record
+        assert "hard_skill_metrics" in record
+
+        version_dir = eval_dir / "v1"
+        assert version_dir.exists()
+        assert (version_dir / "summary.json").exists()

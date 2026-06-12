@@ -70,6 +70,102 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def cmd_run(
+    eval_dir: Optional[Path] = None,
+    hard_dataset: Optional[Path] = None,
+    soft_dataset: Optional[Path] = None,
+) -> None:
+    """运行评估并将结果写入注册表。
+
+    参数:
+        eval_dir: 评估输出目录。
+        hard_dataset: 硬技能 gold dataset 路径。
+        soft_dataset: 软技能 gold dataset 路径。
+    """
+    from ._dict_paths import get_current_soft_skill_dict_path
+    from ._eval_registry import append_eval_record
+    from .eval_v3 import (
+        _load_hard_skill_dataset,
+        _load_soft_skill_dataset,
+        evaluate,
+    )
+    from .hard_skill_matcher import FlatHardSkillMatcher, load_flat_dictionary
+    from .soft_skill_matcher import SoftSkillMatcher
+
+    project_root = Path(__file__).resolve().parents[2]
+    registry_dir = eval_dir or _get_eval_dir()
+
+    dict_path = get_current_soft_skill_dict_path()
+    version = dict_path.stem
+    logger.info("current soft skill dict version: %s", version)
+
+    hard_path = hard_dataset or (registry_dir / "hard_skill_eval_dataset.jsonl")
+    soft_path = soft_dataset or (registry_dir / "soft_skill_gold_dataset.jsonl")
+    hard_samples = _load_hard_skill_dataset(hard_path)
+    soft_samples = _load_soft_skill_dataset(soft_path)
+    logger.info("loaded data: hard=%d, soft=%d", len(hard_samples), len(soft_samples))
+
+    hard_dict_path = project_root / "dicts" / "flat_skill_dictionary.json"
+    hard_dict = load_flat_dictionary(str(hard_dict_path))
+    hard_matcher = FlatHardSkillMatcher(hard_dict)
+    soft_matcher = SoftSkillMatcher()
+
+    version_report_dir = registry_dir / version
+    report = evaluate(
+        hard_samples=hard_samples,
+        soft_samples=soft_samples,
+        hard_matcher=hard_matcher,
+        soft_matcher=soft_matcher,
+        llm_client=None,
+        output_dir=version_report_dir,
+    )
+
+    record = {
+        "dict_version": version,
+        "evaluated_at": report.evaluated_at,
+        "soft_skill_metrics": report.soft_skill_metrics.to_dict(),
+        "hard_skill_metrics": report.hard_skill_metrics.to_dict(),
+        "gold_source": "annotations.label_studio_tasks_v2",
+        "sample_count": max(
+            report.dataset_summary.get("hard_skill_sample_count", 0),
+            report.dataset_summary.get("soft_skill_sample_count", 0),
+        ),
+    }
+    import json
+
+    (version_report_dir / "summary.json").write_text(
+        json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    append_eval_record(registry_dir, record)
+
+    _update_latest_link(registry_dir, version)
+
+    soft = report.soft_skill_metrics
+    hard = report.hard_skill_metrics
+    print(f"\n=== eval done (dict version: {version}) ===")
+    print(f"soft — coverage: {soft.coverage:.4f}  precision: {soft.precision:.4f}  dim_acc: {soft.dimension_accuracy:.4f}")
+    print(f"hard — precision: {hard.precision:.4f}  recall: {hard.recall:.4f}  f1: {hard.f1:.4f}")
+    print(f"report dir: {version_report_dir}")
+
+
+def _update_latest_link(eval_dir: Path, version: str) -> None:
+    """更新 latest 链接指向最新版本。
+
+    参数:
+        eval_dir: 评估输出目录。
+        version: 版本号字符串。
+    """
+    latest_link = eval_dir / "latest"
+    try:
+        if latest_link.exists() or latest_link.is_symlink():
+            latest_link.unlink()
+        latest_link.symlink_to(version, target_is_directory=True)
+    except (OSError, AttributeError):
+        (eval_dir / "latest.txt").write_text(version, encoding="utf-8")
+
+
 def main() -> None:
     """CLI 入口。"""
     logging.basicConfig(
@@ -84,7 +180,7 @@ def main() -> None:
     if args.command == "list":
         cmd_list()
     elif args.command == "run":
-        logger.info("run command will be implemented in Task 5")
+        cmd_run()
     elif args.command == "compare":
         logger.info("compare command will be implemented in Task 6")
     else:
