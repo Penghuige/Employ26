@@ -462,10 +462,28 @@ def evaluate_soft_skills(
         if llm_extract and llm_client is not None:
             from .soft_skill_llm_extractor import extract_soft_skills
 
-            predicted = extract_soft_skills(
+            # 词典匹配
+            dict_predicted = soft_matcher.match_text(sample.text)
+            # LLM 直接抽取
+            llm_predicted = extract_soft_skills(
                 text=sample.text,
                 llm_client=llm_client,
             )
+            # 合并去重（取交集：同时被词典和 LLM 命中的技能，提高精确率）
+            dict_name_set = {_normalize_skill_name(p["name"]) for p in dict_predicted}
+            llm_name_set = {_normalize_skill_name(p["name"]) for p in llm_predicted}
+            # 词典匹配的结果，用 LLM 维度覆盖
+            predicted = []
+            for item in dict_predicted:
+                dn = _normalize_skill_name(item["name"])
+                if dn in llm_name_set:
+                    # 用 LLM 的维度替换词典维度
+                    llm_dim = next(
+                        (llm["dimension"] for llm in llm_predicted
+                         if _normalize_skill_name(llm["name"]) == dn),
+                        item.get("dimension", ""),
+                    )
+                    predicted.append({"name": item["name"], "dimension": llm_dim})
         else:
             predicted = soft_matcher.match_text(sample.text)
 
