@@ -13,7 +13,7 @@ from typing import Dict, List
 import pandas as pd
 
 from .config import load_skill_extraction_config
-from .match_flat_skills_to_duckdb import FlatHardSkillMatcher, load_flat_dictionary
+from .hard_skill_matcher import FlatHardSkillMatcher, load_flat_dictionary
 
 
 logger = logging.getLogger(__name__)

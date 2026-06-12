@@ -234,8 +234,7 @@ def _load_hard_skill_dataset(path: Path) -> List[HardSkillSample]:
             raw_cats = row["gold_categories"]
             if isinstance(raw_cats, dict):
                 gold_categories = {
-                    _normalize_skill_name(k): _safe_text(v)
-                    for k, v in raw_cats.items()
+                    _normalize_skill_name(k): _safe_text(v) for k, v in raw_cats.items()
                 }
             elif isinstance(raw_cats, str):
                 try:
@@ -248,12 +247,14 @@ def _load_hard_skill_dataset(path: Path) -> List[HardSkillSample]:
                 except json.JSONDecodeError:
                     pass
 
-        samples.append(HardSkillSample(
-            sample_id=sample_id,
-            text=text,
-            gold_skills=gold_skills,
-            gold_categories=gold_categories,
-        ))
+        samples.append(
+            HardSkillSample(
+                sample_id=sample_id,
+                text=text,
+                gold_skills=gold_skills,
+                gold_categories=gold_categories,
+            )
+        )
 
     return samples
 
@@ -306,11 +307,13 @@ def _load_soft_skill_dataset(path: Path) -> List[SoftSkillSample]:
                     if name:
                         gold_skills.append({"name": name, "dimension": dimension})
 
-        samples.append(SoftSkillSample(
-            sample_id=sample_id,
-            text=text,
-            gold_skills=gold_skills,
-        ))
+        samples.append(
+            SoftSkillSample(
+                sample_id=sample_id,
+                text=text,
+                gold_skills=gold_skills,
+            )
+        )
 
     return samples
 
@@ -344,7 +347,9 @@ def evaluate_hard_skills(
 
     for sample in samples:
         predicted = hard_matcher.match_text(sample.text)
-        predicted_names = {_normalize_skill_name(item["skill_name"]) for item in predicted}
+        predicted_names = {
+            _normalize_skill_name(item["skill_name"]) for item in predicted
+        }
         gold_names = {_normalize_skill_name(item) for item in sample.gold_skills}
 
         true_positive = predicted_names & gold_names
@@ -366,30 +371,47 @@ def evaluate_hard_skills(
                     category_total += 1
                     predicted_cat = _safe_text(item.get("category", ""))
                     gold_cat = sample.gold_categories[norm_name]
-                    if _normalize_skill_name(predicted_cat) == _normalize_skill_name(gold_cat):
+                    if _normalize_skill_name(predicted_cat) == _normalize_skill_name(
+                        gold_cat
+                    ):
                         category_correct += 1
 
         # 记录误差行
         if false_positive or false_negative:
-            error_rows.append({
-                "sample_id": sample.sample_id,
-                "text": sample.text,
-                "predicted_skills": json.dumps(
-                    sorted([item["skill_name"] for item in predicted]),
-                    ensure_ascii=False,
-                ),
-                "gold_skills": json.dumps(sorted(sample.gold_skills), ensure_ascii=False),
-                "false_positives": json.dumps(
-                    sorted([item["skill_name"] for item in predicted
-                            if _normalize_skill_name(item["skill_name"]) in false_positive]),
-                    ensure_ascii=False,
-                ),
-                "false_negatives": json.dumps(
-                    sorted([s for s in sample.gold_skills
-                            if _normalize_skill_name(s) in false_negative]),
-                    ensure_ascii=False,
-                ),
-            })
+            error_rows.append(
+                {
+                    "sample_id": sample.sample_id,
+                    "text": sample.text,
+                    "predicted_skills": json.dumps(
+                        sorted([item["skill_name"] for item in predicted]),
+                        ensure_ascii=False,
+                    ),
+                    "gold_skills": json.dumps(
+                        sorted(sample.gold_skills), ensure_ascii=False
+                    ),
+                    "false_positives": json.dumps(
+                        sorted(
+                            [
+                                item["skill_name"]
+                                for item in predicted
+                                if _normalize_skill_name(item["skill_name"])
+                                in false_positive
+                            ]
+                        ),
+                        ensure_ascii=False,
+                    ),
+                    "false_negatives": json.dumps(
+                        sorted(
+                            [
+                                s
+                                for s in sample.gold_skills
+                                if _normalize_skill_name(s) in false_negative
+                            ]
+                        ),
+                        ensure_ascii=False,
+                    ),
+                }
+            )
 
     metrics_dict = _compute_precision_recall_f1(tp, fp, fn)
 
@@ -466,7 +488,9 @@ def evaluate_soft_skills(
                         dimension_total += 1
                         pred_dim = _safe_text(pred_item.get("dimension", ""))
                         gold_dim = _safe_text(gold_item.get("dimension", ""))
-                        if _normalize_skill_name(pred_dim) == _normalize_skill_name(gold_dim):
+                        if _normalize_skill_name(pred_dim) == _normalize_skill_name(
+                            gold_dim
+                        ):
                             dimension_correct += 1
                         break
 
@@ -474,26 +498,40 @@ def evaluate_soft_skills(
         missing = gold_names - predicted_names
         extra = predicted_names - gold_names
         if missing or extra:
-            error_rows.append({
-                "sample_id": sample.sample_id,
-                "text": sample.text,
-                "predicted_skills": json.dumps(
-                    sorted([p["name"] for p in predicted]), ensure_ascii=False,
-                ),
-                "gold_skills": json.dumps(
-                    sorted([g["name"] for g in gold_skills]), ensure_ascii=False,
-                ),
-                "missing_skills": json.dumps(
-                    sorted([s for s in gold_skills
-                            if _normalize_skill_name(s["name"]) in missing]),
-                    ensure_ascii=False,
-                ),
-                "extra_skills": json.dumps(
-                    sorted([p["name"] for p in predicted
-                            if _normalize_skill_name(p["name"]) in extra]),
-                    ensure_ascii=False,
-                ),
-            })
+            error_rows.append(
+                {
+                    "sample_id": sample.sample_id,
+                    "text": sample.text,
+                    "predicted_skills": json.dumps(
+                        sorted([p["name"] for p in predicted]),
+                        ensure_ascii=False,
+                    ),
+                    "gold_skills": json.dumps(
+                        sorted([g["name"] for g in gold_skills]),
+                        ensure_ascii=False,
+                    ),
+                    "missing_skills": json.dumps(
+                        sorted(
+                            [
+                                s
+                                for s in gold_skills
+                                if _normalize_skill_name(s["name"]) in missing
+                            ]
+                        ),
+                        ensure_ascii=False,
+                    ),
+                    "extra_skills": json.dumps(
+                        sorted(
+                            [
+                                p["name"]
+                                for p in predicted
+                                if _normalize_skill_name(p["name"]) in extra
+                            ]
+                        ),
+                        ensure_ascii=False,
+                    ),
+                }
+            )
 
     return SoftSkillMetrics(
         coverage=total_matched / max(total_gold, 1),
@@ -531,8 +569,11 @@ def evaluate(
     返回:
         V3EvalReport: 评估报告。
     """
-    logger.info("开始 V3 评估: 硬技能 %d 样本, 软技能 %d 样本",
-                len(hard_samples), len(soft_samples))
+    logger.info(
+        "开始 V3 评估: 硬技能 %d 样本, 软技能 %d 样本",
+        len(hard_samples),
+        len(soft_samples),
+    )
 
     # 硬技能评估
     hard_metrics = evaluate_hard_skills(hard_samples, hard_matcher)
@@ -583,7 +624,9 @@ def evaluate(
     if hard_metrics.error_rows:
         hard_error_path = output_dir / f"hard_skill_errors_{timestamp}.csv"
         pd.DataFrame(hard_metrics.error_rows).to_csv(
-            hard_error_path, index=False, encoding="utf-8-sig",
+            hard_error_path,
+            index=False,
+            encoding="utf-8-sig",
         )
         logger.info("硬技能误差明细: %s", hard_error_path)
 
@@ -591,7 +634,9 @@ def evaluate(
     if soft_metrics.error_rows:
         soft_error_path = output_dir / f"soft_skill_errors_{timestamp}.csv"
         pd.DataFrame(soft_metrics.error_rows).to_csv(
-            soft_error_path, index=False, encoding="utf-8-sig",
+            soft_error_path,
+            index=False,
+            encoding="utf-8-sig",
         )
         logger.info("软技能误差明细: %s", soft_error_path)
 
@@ -625,12 +670,17 @@ def run(
     # 默认路径
     if hard_dataset_path is None:
         hard_dataset_path = str(
-            project_root / "output" / "skill_extraction" / "regression"
+            project_root
+            / "output"
+            / "skill_extraction"
+            / "regression"
             / "flat_skill_regression_dataset.jsonl"
         )
     if soft_dataset_path is None:
         soft_dataset_path = str(
-            project_root / "output" / "skill_extraction"
+            project_root
+            / "output"
+            / "skill_extraction"
             / "soft_skill_eval_dataset.jsonl"
         )
     if dict_path is None:
@@ -645,7 +695,7 @@ def run(
     logger.info("加载软技能评估数据: %d 样本", len(soft_samples))
 
     # 初始化匹配器
-    from .match_flat_skills_to_duckdb import FlatHardSkillMatcher, load_flat_dictionary
+    from .hard_skill_matcher import FlatHardSkillMatcher, load_flat_dictionary
 
     hard_dict = load_flat_dictionary(dict_path)
     hard_matcher = FlatHardSkillMatcher(hard_dict)

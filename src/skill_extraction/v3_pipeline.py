@@ -109,8 +109,7 @@ def _merge_deduplicate(
     """
     hard_skill_names = {s["skill_name"].casefold() for s in hard_skills}
     filtered_soft = [
-        s for s in soft_skills
-        if s["name"].casefold() not in hard_skill_names
+        s for s in soft_skills if s["name"].casefold() not in hard_skill_names
     ]
     return hard_skills, filtered_soft
 
@@ -188,10 +187,7 @@ class V3Pipeline:
 
         # ── 硬技能优先去重 ──
         hard_names = {s["name"].casefold() for s in hard_skills}
-        soft_skills = [
-            s for s in raw_soft
-            if s["name"].casefold() not in hard_names
-        ]
+        soft_skills = [s for s in raw_soft if s["name"].casefold() not in hard_names]
 
         return RecordResult(
             recruitment_record_id=record_id,
@@ -201,7 +197,8 @@ class V3Pipeline:
         )
 
     def process_records(
-        self, records: Sequence[Dict[str, Any]],
+        self,
+        records: Sequence[Dict[str, Any]],
     ) -> List[RecordResult]:
         """对多条岗位记录执行双管线技能抽取。
 
@@ -245,11 +242,13 @@ class V3Pipeline:
         pg_params = paths.pg_connection_params
 
         logger.info("从 PostgreSQL 读取数据: %s", source_table)
-        logger.info("数据库: %s@%s:%s/%s",
-                     pg_params.get("user", ""),
-                     pg_params.get("host", ""),
-                     pg_params.get("port", ""),
-                     pg_params.get("dbname", ""))
+        logger.info(
+            "数据库: %s@%s:%s/%s",
+            pg_params.get("user", ""),
+            pg_params.get("host", ""),
+            pg_params.get("port", ""),
+            pg_params.get("dbname", ""),
+        )
 
         records = self._fetch_records(pg_params, source_table)
         logger.info("已读取 %d 条记录", len(records))
@@ -295,15 +294,34 @@ class V3Pipeline:
         conn = psycopg2.connect(**pg_params)
         try:
             with conn.cursor() as cur:
-                cur.execute(f"""
-                    SELECT
-                        recruitment_record_id,
-                        job_title,
-                        requirements_text,
-                        duties_text,
-                        job_description_clean
-                    FROM {source_table}
-                """)
+                # 优先尝试包含来源追溯字段的查询；若源表无这些列则回退到基础查询。
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT
+                            recruitment_record_id,
+                            job_title,
+                            requirements_text,
+                            duties_text,
+                            job_description_clean,
+                            source_table,
+                            source_row_number
+                        FROM {source_table}
+                    """
+                    )
+                except Exception:
+                    conn.rollback()
+                    cur.execute(
+                        f"""
+                        SELECT
+                            recruitment_record_id,
+                            job_title,
+                            requirements_text,
+                            duties_text,
+                            job_description_clean
+                        FROM {source_table}
+                    """
+                    )
                 columns = [desc[0] for desc in cur.description]
                 rows = cur.fetchall()
         finally:
@@ -337,9 +355,11 @@ def create_v3_pipeline(
     project_root = paths.project_root
 
     # 硬技能匹配器
-    from .match_flat_skills_to_duckdb import FlatHardSkillMatcher, load_flat_dictionary
+    from .hard_skill_matcher import FlatHardSkillMatcher, load_flat_dictionary
 
-    hard_dict_path = dict_path or (project_root / "dicts" / "flat_skill_dictionary.json")
+    hard_dict_path = dict_path or (
+        project_root / "dicts" / "flat_skill_dictionary.json"
+    )
     hard_dict = load_flat_dictionary(str(hard_dict_path))
     hard_matcher = FlatHardSkillMatcher(hard_dict)
 
@@ -491,7 +511,9 @@ def main() -> None:
         total_soft = sum(r.soft_skill_count for r in results)
         logger.info(
             "结果摘要: %d 条记录, 硬技能命中 %d 次, 软技能命中 %d 次",
-            len(results), total_hard, total_soft,
+            len(results),
+            total_hard,
+            total_soft,
         )
 
 
