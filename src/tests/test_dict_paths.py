@@ -1,5 +1,7 @@
 """测试词典路径解析工具。"""
-from pathlib import Path
+
+import pytest
+
 from src.skill_extraction._dict_paths import (
     get_current_soft_skill_dict_path,
     get_soft_skill_dict_path_for_version,
@@ -52,7 +54,7 @@ def test_list_soft_skill_dict_versions(tmp_path, monkeypatch):
     assert set(versions) == {"v1", "v2"}
 
 
-def test_get_current_soft_skill_dict_path_missing_file(tmp_path, monkeypatch):
+def test_get_current_soft_skill_dict_path_missing_current_txt(tmp_path, monkeypatch):
     """current.txt 不存在时抛出 FileNotFoundError。"""
     dict_dir = tmp_path / "soft_skill"
     dict_dir.mkdir()
@@ -61,6 +63,19 @@ def test_get_current_soft_skill_dict_path_missing_file(tmp_path, monkeypatch):
         "src.skill_extraction._dict_paths._SOFT_SKILL_DICT_DIR",
         dict_dir,
     )
-    import pytest
     with pytest.raises(FileNotFoundError, match="current.txt"):
+        get_current_soft_skill_dict_path()
+
+
+def test_get_current_soft_skill_dict_path_missing_version_file(tmp_path, monkeypatch):
+    """current.txt 指向的版本文件不存在时抛出 FileNotFoundError。"""
+    dict_dir = tmp_path / "soft_skill"
+    dict_dir.mkdir()
+    (dict_dir / "current.txt").write_text("v99")
+
+    monkeypatch.setattr(
+        "src.skill_extraction._dict_paths._SOFT_SKILL_DICT_DIR",
+        dict_dir,
+    )
+    with pytest.raises(FileNotFoundError, match="v99"):
         get_current_soft_skill_dict_path()
