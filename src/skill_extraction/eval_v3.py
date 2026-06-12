@@ -462,28 +462,10 @@ def evaluate_soft_skills(
         if llm_extract and llm_client is not None:
             from .soft_skill_llm_extractor import extract_soft_skills
 
-            # 词典匹配
-            dict_predicted = soft_matcher.match_text(sample.text)
-            # LLM 直接抽取
-            llm_predicted = extract_soft_skills(
+            predicted = extract_soft_skills(
                 text=sample.text,
                 llm_client=llm_client,
             )
-            # 合并去重（取交集：同时被词典和 LLM 命中的技能，提高精确率）
-            dict_name_set = {_normalize_skill_name(p["name"]) for p in dict_predicted}
-            llm_name_set = {_normalize_skill_name(p["name"]) for p in llm_predicted}
-            # 词典匹配的结果，用 LLM 维度覆盖
-            predicted = []
-            for item in dict_predicted:
-                dn = _normalize_skill_name(item["name"])
-                if dn in llm_name_set:
-                    # 用 LLM 的维度替换词典维度
-                    llm_dim = next(
-                        (llm["dimension"] for llm in llm_predicted
-                         if _normalize_skill_name(llm["name"]) == dn),
-                        item.get("dimension", ""),
-                    )
-                    predicted.append({"name": item["name"], "dimension": llm_dim})
         else:
             predicted = soft_matcher.match_text(sample.text)
 
@@ -504,22 +486,24 @@ def evaluate_soft_skills(
         # 覆盖率：gold 中有多少被 predicted 命中
         # 模糊匹配模式：若 pred 名称是 gold 名称的子串（或反之），视为命中
         matched_names = set()
+        pred_to_gold = {}  # pred_name -> matched_gold_name
         for gn in gold_names:
             for pn in predicted_names:
                 if gn == pn or gn in pn or pn in gn:
                     matched_names.add(gn)
+                    pred_to_gold[pn] = gn
                     break
         total_matched += len(matched_names)
         total_gold += len(gold_names)
         total_predicted += len(predicted_names)
 
-        # 维度准确率
+        # 维度准确率（使用 pred→gold 模糊映射）
         for pred_item in predicted:
             norm_pred_name = _normalize_skill_name(pred_item["name"])
-            if norm_pred_name in matched_names:
-                # 找到对应的 gold 条目
+            matched_gold = pred_to_gold.get(norm_pred_name)
+            if matched_gold:
                 for gold_item in gold_skills:
-                    if _normalize_skill_name(gold_item["name"]) == norm_pred_name:
+                    if _normalize_skill_name(gold_item["name"]) == matched_gold:
                         dimension_total += 1
                         pred_dim = _safe_text(pred_item.get("dimension", ""))
                         gold_dim = _safe_text(gold_item.get("dimension", ""))
@@ -529,9 +513,17 @@ def evaluate_soft_skills(
                             dimension_correct += 1
                         break
 
-        # 记录误差行
-        missing = gold_names - predicted_names
-        extra = predicted_names - gold_names
+        # 误差行：gold中未模糊匹配到的 = missing，pred中未命中任何gold的 = extra
+        missing = gold_names - matched_names
+        extra = set()
+        for pn in predicted_names:
+            hit = False
+            for gn in gold_names:
+                if gn == pn or gn in pn or pn in gn:
+                    hit = True
+                    break
+            if not hit:
+                extra.add(pn)
         if missing or extra:
             error_rows.append(
                 {
