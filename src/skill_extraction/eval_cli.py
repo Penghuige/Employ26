@@ -63,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = sub.add_parser("run", help="run eval and write registry")
     run_parser.add_argument("--use-llm", action="store_true", help="enable LLM soft skill validation")
+    run_parser.add_argument("--soft-dataset", default=None, help="soft skill gold dataset path (default: auto)")
+    run_parser.add_argument("--hard-dataset", default=None, help="hard skill gold dataset path (default: auto)")
     cmp_parser = sub.add_parser("compare", help="compare two versions")
     cmp_parser.add_argument("version_a")
     cmp_parser.add_argument("version_b")
@@ -249,7 +251,11 @@ def main() -> None:
     if args.command == "list":
         cmd_list()
     elif args.command == "run":
-        cmd_run(use_llm=getattr(args, "use_llm", False))
+        cmd_run(
+            use_llm=getattr(args, "use_llm", False),
+            soft_dataset=Path(getattr(args, "soft_dataset", None)) if getattr(args, "soft_dataset", None) else None,
+            hard_dataset=Path(getattr(args, "hard_dataset", None)) if getattr(args, "hard_dataset", None) else None,
+        )
     elif args.command == "compare":
         cmd_compare(args.version_a, args.version_b)
     else:
