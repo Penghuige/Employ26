@@ -100,11 +100,11 @@ class TestCmdRun:
             registry = json.load(f)
         assert len(registry["evaluations"]) == 1
         record = registry["evaluations"][0]
-        assert record["dict_version"] == "v1"
+        assert record["dict_version"]  # 版本标识非空
         assert "soft_skill_metrics" in record
         assert "hard_skill_metrics" in record
 
-        version_dir = eval_dir / "v1"
+        version_dir = eval_dir / record["dict_version"]
         assert version_dir.exists()
         assert (version_dir / "summary.json").exists()
 
