@@ -153,14 +153,9 @@ def extract_soft_skills(
     skills: List[Dict[str, str]] = []
     for item in resp:
         if isinstance(item, dict):
-            name = (
-                (item.get("name") or item.get("skill") or "").strip()
-            )
+            name = (item.get("name") or item.get("skill") or "").strip()
             dimension = (
-                item.get("dimension")
-                or item.get("category")
-                or item.get("type")
-                or ""
+                item.get("dimension") or item.get("category") or item.get("type") or ""
             ).strip()
             if name and dimension:
                 skills.append({"name": name, "dimension": dimension})
@@ -213,7 +208,11 @@ def extract_soft_skills_batch(
             logger.warning("批量 LLM 抽取失败 (batch %d): %s", i // batch_size, exc)
             # 回退到单条
             for text in batch:
-                results.append(extract_soft_skills(text, llm_client, max_skills=max_skills, use_fewshot=use_fewshot))
+                results.append(
+                    extract_soft_skills(
+                        text, llm_client, max_skills=max_skills, use_fewshot=use_fewshot
+                    )
+                )
             continue
 
         if isinstance(resp, list):
@@ -222,8 +221,12 @@ def extract_soft_skills_batch(
                 if isinstance(item, list):
                     for entry in item:
                         if isinstance(entry, dict):
-                            name = (entry.get("name") or entry.get("skill") or "").strip()
-                            dimension = (entry.get("dimension") or entry.get("category") or "").strip()
+                            name = (
+                                entry.get("name") or entry.get("skill") or ""
+                            ).strip()
+                            dimension = (
+                                entry.get("dimension") or entry.get("category") or ""
+                            ).strip()
                             if name and dimension:
                                 skills.append({"name": name, "dimension": dimension})
                 results.append(skills)
@@ -233,7 +236,11 @@ def extract_soft_skills_batch(
         else:
             # fallback
             for text in batch:
-                results.append(extract_soft_skills(text, llm_client, max_skills=max_skills, use_fewshot=use_fewshot))
+                results.append(
+                    extract_soft_skills(
+                        text, llm_client, max_skills=max_skills, use_fewshot=use_fewshot
+                    )
+                )
 
     return results
 

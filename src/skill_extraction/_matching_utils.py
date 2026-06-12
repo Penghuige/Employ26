@@ -76,7 +76,9 @@ def normalize_match_text(text: str) -> str:
     """
     lowered = str(text).lower()
     lowered = re.sub(r"[\s　]+", "", lowered)
-    lowered = re.sub(r"[，,。；;：:（）()\[\]【】{}<>《》“”\"'‘’、/\\|_.-]", "", lowered)
+    lowered = re.sub(
+        r"[，,。；;：:（）()\[\]【】{}<>《》“”\"'‘’、/\\|_.-]", "", lowered
+    )
     return lowered
 
 

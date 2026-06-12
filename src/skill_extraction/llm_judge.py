@@ -43,8 +43,7 @@ def judge_predictions(
         return {}
 
     pred_list = "\n".join(
-        f"- {p['name']} [{p.get('dimension', '')}]"
-        for p in predictions
+        f"- {p['name']} [{p.get('dimension', '')}]" for p in predictions
     )
 
     try:

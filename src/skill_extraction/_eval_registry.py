@@ -66,9 +66,7 @@ def append_eval_record(registry_dir: Path, record: Dict[str, Any]) -> None:
         json.dump(registry, f, ensure_ascii=False, indent=2)
 
 
-def get_record_by_version(
-    registry_dir: Path, version: str
-) -> Optional[Dict[str, Any]]:
+def get_record_by_version(registry_dir: Path, version: str) -> Optional[Dict[str, Any]]:
     """获取指定词典版本的最新评估记录。
 
     参数:
@@ -80,9 +78,7 @@ def get_record_by_version(
     """
     registry = load_registry(registry_dir)
     candidates = [
-        r
-        for r in registry.get("evaluations", [])
-        if r.get("dict_version") == version
+        r for r in registry.get("evaluations", []) if r.get("dict_version") == version
     ]
     if not candidates:
         return None

@@ -615,7 +615,9 @@ def evaluate(
     )
 
     # 软技能评估
-    soft_metrics = evaluate_soft_skills(soft_samples, soft_matcher, llm_client, llm_extract=llm_extract)
+    soft_metrics = evaluate_soft_skills(
+        soft_samples, soft_matcher, llm_client, llm_extract=llm_extract
+    )
     logger.info(
         "软技能评估: 覆盖率=%.4f 精确率=%.4f 维度准确率=%.4f",
         soft_metrics.coverage,

@@ -429,9 +429,7 @@ class FlatHardSkillMatcher:
             return True
         if text in BROAD_ALIAS_BLACKLIST:
             return True
-        if len(
-            normalize_match_text(text)
-        ) <= 2 and not is_ascii_like_term(text):
+        if len(normalize_match_text(text)) <= 2 and not is_ascii_like_term(text):
             return True
         return any(pattern.fullmatch(text) for pattern in LOW_VALUE_ALIAS_PATTERNS)
 

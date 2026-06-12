@@ -40,7 +40,9 @@ def cmd_list(eval_dir: Optional[Path] = None) -> None:
         print("no eval records")
         return
 
-    print(f"{'version':<8} {'evaluated_at':<22} {'soft_cov':<10} {'soft_prec':<10} {'hard_f1':<10}")
+    print(
+        f"{'version':<8} {'evaluated_at':<22} {'soft_cov':<10} {'soft_prec':<10} {'hard_f1':<10}"
+    )
     print("-" * 60)
     for r in evaluations:
         soft = r.get("soft_skill_metrics", {})
@@ -62,9 +64,19 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     run_parser = sub.add_parser("run", help="run eval and write registry")
-    run_parser.add_argument("--use-llm", action="store_true", help="enable LLM soft skill validation")
-    run_parser.add_argument("--soft-dataset", default=None, help="soft skill gold dataset path (default: auto)")
-    run_parser.add_argument("--hard-dataset", default=None, help="hard skill gold dataset path (default: auto)")
+    run_parser.add_argument(
+        "--use-llm", action="store_true", help="enable LLM soft skill validation"
+    )
+    run_parser.add_argument(
+        "--soft-dataset",
+        default=None,
+        help="soft skill gold dataset path (default: auto)",
+    )
+    run_parser.add_argument(
+        "--hard-dataset",
+        default=None,
+        help="hard skill gold dataset path (default: auto)",
+    )
     cmp_parser = sub.add_parser("compare", help="compare two versions")
     cmp_parser.add_argument("version_a")
     cmp_parser.add_argument("version_b")
@@ -158,8 +170,12 @@ def cmd_run(
     soft = report.soft_skill_metrics
     hard = report.hard_skill_metrics
     print(f"\n=== eval done (dict version: {version}) ===")
-    print(f"soft — coverage: {soft.coverage:.4f}  precision: {soft.precision:.4f}  dim_acc: {soft.dimension_accuracy:.4f}")
-    print(f"hard — precision: {hard.precision:.4f}  recall: {hard.recall:.4f}  f1: {hard.f1:.4f}")
+    print(
+        f"soft — coverage: {soft.coverage:.4f}  precision: {soft.precision:.4f}  dim_acc: {soft.dimension_accuracy:.4f}"
+    )
+    print(
+        f"hard — precision: {hard.precision:.4f}  recall: {hard.recall:.4f}  f1: {hard.f1:.4f}"
+    )
     print(f"report dir: {version_report_dir}")
 
 
@@ -253,8 +269,16 @@ def main() -> None:
     elif args.command == "run":
         cmd_run(
             use_llm=getattr(args, "use_llm", False),
-            soft_dataset=Path(getattr(args, "soft_dataset", None)) if getattr(args, "soft_dataset", None) else None,
-            hard_dataset=Path(getattr(args, "hard_dataset", None)) if getattr(args, "hard_dataset", None) else None,
+            soft_dataset=(
+                Path(getattr(args, "soft_dataset", None))
+                if getattr(args, "soft_dataset", None)
+                else None
+            ),
+            hard_dataset=(
+                Path(getattr(args, "hard_dataset", None))
+                if getattr(args, "hard_dataset", None)
+                else None
+            ),
         )
     elif args.command == "compare":
         cmd_compare(args.version_a, args.version_b)
